@@ -1,0 +1,12 @@
+.venv/
+.verify-venv/
+.uv-cache/
+__pycache__/
+.pytest_cache/
+.playwright/
+.env
+.env.*
+!.env.example
+credentials/
+client_secret*.json
+token*.json
