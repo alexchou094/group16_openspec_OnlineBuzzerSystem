@@ -7,7 +7,11 @@
 ## ADDED Requirements
 
 ### Requirement: Google Sheets 選取與授權
-系統 SHALL 讓老師授權並透過檔案選取介面選擇可存取的 Google Sheets，再明確選擇其中一張工作表。取消、拒絕、過期、權限不足或非 Google Sheets 檔案 SHALL 顯示可理解的錯誤且不更動活動題目。正式匯入 SHALL 不以本地 XLSX 上傳取代 Google Sheets。
+系統 SHALL 讓老師授權並透過檔案選取介面選擇可存取的 Google Sheets。試算表只有一張工作表時 SHALL 自動選用該工作表，多張時 SHALL 要求老師明確選擇一張。取消、拒絕、過期、權限不足或非 Google Sheets 檔案 SHALL 顯示可理解的錯誤且不更動活動題目。正式匯入 SHALL 不以本地 XLSX 上傳取代 Google Sheets。
+
+#### Scenario: 選擇單工作表檔案
+- **WHEN** 老師選擇只包含一張工作表的 Google Sheets
+- **THEN** 系統直接選用該工作表並保留試算表與工作表識別，省略手動選擇工作表的步驟
 
 #### Scenario: 選擇多工作表檔案
 - **WHEN** 老師選擇包含數張工作表的 Google Sheets

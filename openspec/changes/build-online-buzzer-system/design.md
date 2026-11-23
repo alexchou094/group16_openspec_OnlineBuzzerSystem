@@ -59,8 +59,8 @@ Google adapter --> Google Sheets
 
 | 模型 | 主要資料與不變條件 |
 | --- | --- |
-| Activity | id、代碼、owner session、phase、題目、組別、輪次、state_version、finalized_revision |
-| Group | id、活動、正規化名稱、加入憑證雜湊；名稱不作為提交授權依據 |
+| Activity | id、代碼、owner session、phase、組數上限、題目、組別、輪次、state_version、finalized_revision |
+| Group | 穩定內部 id、活動、活動內唯一的整數組號、6 位數加入憑證 |
 | SourceSnapshot | spreadsheet_id、sheet_id、顯示名稱、表頭、合併範圍、結構指紋 |
 | Question / Blank | 穩定內部 id、數字題號、有序子空格、編號與目標格；不存題目敘述 |
 | Round | id、題目集合、fairness_enabled、起始次數、opened_at、deadline、fixed_question_order、review_version、finalized |
@@ -68,7 +68,7 @@ Google adapter --> Google Sheets
 | RoundResult | 每題候選順位、勝者、處理當下成功次數、勝出理由、累計次數與版本 |
 | ExportSnapshot / Attempt | 定案版本、目標答案集合、結構指紋、預覽識別、嘗試狀態與錯誤分類 |
 
-活動 phase 為 PREPARING、OPEN、RESULTS、FINISHED；定案是 RESULTS 中的輪次旗標，不另建立與活動矛盾的 phase。歷史成功次數從定案勝者推導；重算只用區域副本，避免暫算污染歷史。中途加入新組時，本輪基準以零補足。
+活動 phase 為 PREPARING、OPEN、RESULTS、CANCELLED、FINISHED。定案是 RESULTS 中的輪次旗標。歷史成功次數從定案勝者推導；重算只用區域副本，避免暫算污染歷史。中途加入新組時，本輪基準以零補足。
 
 ```text
 PREPARING --> OPEN --> RESULTS [unfinalized]
@@ -80,31 +80,38 @@ PREPARING --> OPEN --> RESULTS [unfinalized]
     |              RESULTS [finalized] --> OPEN
     |                    |
     v                    v
-FINISHED <----------- FINISHED
+CANCELLED             FINISHED
 ```
 
-準備中允許取消；開輪後先關輪、審閱、定案再結束。已定案但無勝者的題仍屬未成功，可再次選取。每個成功題一旦定案便不再開放，確保每題至多一份定案勝者。來源從第一輪開始鎖定。
+準備中可取消，取消後拒絕預覽、寫回及 CSV 下載。開輪後先關輪、審閱、定案再結束。取消或結束後，同一老師工作階段可再建立活動。開輪時獨立固定公平模式與倒數。兩種模式皆可關閉倒數，或啟用 1～3600 秒的整數倒數。已定案但無勝者的題仍屬未成功，可再次選取。每個成功題一旦定案便不再開放，確保每題至多一份定案勝者。來源從第一輪開始鎖定。
 
 ### 3. 身分、同步與 HTTP 合約
 
-以隨機 session id 的 HttpOnly、SameSite cookie 綁定伺服端身分，老師與學生使用獨立瀏覽器 context／profile 展示，避免同一 cookie 空間切換角色。組別第一次建立後提供可分享的加入憑證，後端只存其雜湊；後續同名加入須提供憑證。相較只憑組名，可防止一般學生任意代送。不是正式校務帳號系統，不建立學生學號或外部名冊。
+以隨機 session id 的 HttpOnly、SameSite cookie 綁定伺服端身分。建立活動的老師工作階段可跨同一瀏覽器工作階段的分頁使用。建立活動時，伺服端原子檢查該老師工作階段是否已有進行中活動。老師與學生使用獨立瀏覽器 context／profile 展示。
 
-敏感操作檢查活動 owner、CSRF token／Origin；不把 Google 登入等同活動 owner。組名採去除首尾空白後精確比對。未授權回應不攜帶活動私有內容，組名／答案永遠以轉義文字顯示。session 與 Google 憑證不進 log、repo 或錯誤頁。
+同一活動內的組號為 1 到組數上限的整數。新組建立時隨機產生 6 位數憑證，以可保留前導零的字串存於伺服端記憶體。後續加入驗證組號與憑證。角色過濾後的狀態資料僅向本組已加入裝置和活動老師提供該組憑證，供同組分享與老師備援。公開結果省略憑證。
+
+離組只解除目前裝置與組別的關聯。刪除組別與接受提交共用活動鎖，刪除前檢查該組是否曾有有效提交。刪除時解除所有裝置關聯並使原憑證失效。同一組號重新建立時使用新的內部 id 與憑證。提交與成功次數依內部組別 id 歸屬。
+
+敏感操作檢查活動 owner、CSRF token／Origin；Google 登入不授予活動 owner 身分。未授權回應不攜帶活動私有內容，答案以轉義文字顯示。工作階段、組別加入及 Google 憑證不進 log、repo 或錯誤頁。
 
 路由草案（實作可調整 URL，但不得改變 specs 行為）：
 
 | 操作 | 輸入重點 | 回應／限制 |
 | --- | --- | --- |
-| `POST /activities` | 建立者 session | 活動代碼、老師控制權 |
-| `POST /activities/join` | 代碼、組名、既有組加入憑證 | 學生 session、自己的組別 |
+| `POST /activities` | 建立者 session、組數上限 | 活動代碼、老師控制權；已有進行中活動時拒絕 |
+| `POST /activities/join` | 代碼、組號、既有組加入憑證 | 學生 session、自己的組別 |
+| `POST /activities/{id}/leave` | 學生 session | 僅準備中或結果階段，解除目前裝置的組別身分 |
+| `DELETE /activities/{id}/groups/{group}` | 老師 session、組別識別 | 僅刪除從未提交的組別 |
 | `GET /activities/{id}/state` | 身分 | 依角色投影、server_time、版本、phase、自己的提交或老師看板 |
-| `POST /activities/{id}/import` | 來源檔案與工作表識別 | 完整題目映射摘要或位置錯誤；僅準備中 |
+| `POST /activities/{id}/import` | 來源檔案；多張工作表時提供選取的工作表識別 | 單張工作表自動選用；僅準備中，回傳完整映射摘要或位置錯誤 |
 | `POST /activities/{id}/rounds` | 題目、模式、可選秒數、預期狀態版本 | 新輪次；條件不足回衝突 |
 | `POST /activities/{id}/rounds/{round}/submissions` | question_id、答案陣列 | 不接受用戶指定組別／時間，已送出回既有自己組資料 |
 | `POST .../rounds/{round}/close` | round_id | 冪等關輪結果 |
 | `PATCH .../rounds/{round}/reviews/{submission}` | 判錯狀態、expected_review_version | 原子重算；舊版本回衝突 |
 | `POST .../rounds/{round}/finalize` | expected_review_version | 冪等定案結果 |
-| `POST /activities/{id}/finish` | 預期活動版本 | 只有準備中或已定案 RESULTS 可執行 |
+| `POST /activities/{id}/cancel` | 預期活動版本 | 僅 PREPARING 可取消 |
+| `POST /activities/{id}/finish` | 預期活動版本 | 僅已定案 RESULTS 可結束 |
 | `POST .../exports/preview`、`POST .../exports/write` | 定案快照及確認識別 | 新定案版本使舊預覽失效 |
 | `GET .../exports/{attempt}`、`POST .../exports/{attempt}/retry` | 寫入嘗試識別 | 結果核對或同快照重試 |
 | `GET .../exports/results.csv` | 老師身分 | 所有已定案輪次的提交紀錄 |
@@ -167,7 +174,7 @@ OAuth client secret 從環境指定的私有檔案載入，client id／Picker de
 
 Google 外部修改不受本機鎖約束。結構檢查與寫入之間仍存在競爭窗口，本版要求寫回期間不並行修改學習單結構；這是操作限制，不宣稱具備外部原子比較交換。寫入後結構核對不符時報待確認並停止自動重試，不盲目清空或回復儲存格。原有答案覆寫屬老師預覽確認的效果，原件的備份由測試複本及人工作業處理。
 
-CSV 使用 Python 標準 csv 模組與 UTF-8 BOM，依輪次、題號、候選順位（判錯最後）、接收序號及子空格穩定排序。每個提交子格一列；無提交不造資料列。時間為 ISO 8601 UTC、保留微秒；同時間先後可由順位理解，判錯順位留空。對組名與答案中可觸發公式的前綴（含前導空白／控制字元後的 =、+、-、@）加單引號文字保護，並在下載說明中告知。CSV 安全輸出不回寫至原答案。
+CSV 使用 Python 標準 csv 模組與 UTF-8 BOM，依輪次、題號、候選順位（判錯最後）、接收序號及子空格穩定排序。每個提交子格一列；無提交不造資料列，組別欄填數字組號。時間為 ISO 8601 UTC、保留微秒；同時間先後可由順位理解，判錯順位留空。對答案中可觸發公式的前綴（含前導空白／控制字元後的 =、+、-、@）加單引號文字保護，並在下載說明中告知。CSV 安全輸出不回寫至原答案。
 
 ### 9. 驗收與需求追溯
 
