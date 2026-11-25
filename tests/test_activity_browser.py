@@ -36,6 +36,13 @@ def test_teacher_and_two_groups_sync(server):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(channel=os.getenv("BUZZER_BROWSER_CHANNEL") or None)
         teacher_context, first_context, second_context = (browser.new_context() for _ in range(3))
+
+        def serve_legacy_script(route):
+            response = route.fetch()
+            script = response.text().replace("session.student_activities", "[]")
+            route.fulfill(content_type="text/javascript", body=script)
+
+        first_context.route(lambda url: url.endswith("/static/activity.js"), serve_legacy_script)
         teacher, first, second = (context.new_page() for context in (teacher_context, first_context, second_context))
         teacher.goto(server)
         teacher.get_by_label("組數上限").fill("2")
@@ -51,9 +58,14 @@ def test_teacher_and_two_groups_sync(server):
         first.reload()
         expect(first.locator("#identity")).to_contain_text("第 1 組")
         expect(first.get_by_text("組別與加入憑證", exact=True)).to_have_count(0)
+        first.go_back()
+        first.get_by_role("link", name="回到進行中的活動", exact=True).click()
+        expect(first.locator("#identity")).to_contain_text("第 1 組")
         teacher.get_by_role("button", name="刪除第 2 組").click()
         expect(second.locator("#connection")).to_contain_text("沒有此活動的操作權限")
         second.get_by_role("link", name="返回首頁").click()
+        expect(second.get_by_role("button", name="加入活動")).to_be_enabled()
+        expect(second.get_by_role("link", name="回到進行中的活動")).to_have_count(0)
         second.get_by_label("活動代碼").fill(code)
         second.get_by_label("組號", exact=True).fill("2")
         second.get_by_role("button", name="加入活動").click()
@@ -91,4 +103,7 @@ def test_teacher_and_two_groups_sync(server):
         teacher.get_by_role("button", name="結束活動").click()
         expect(second.locator("#phase")).to_have_text("已結束", timeout=2000)
         expect(second.get_by_text("未成功題目：第 1 題、第 2 題、第 3 題")).to_be_visible()
+        second.get_by_role("link", name="返回首頁").click()
+        expect(second.get_by_role("button", name="加入活動")).to_be_enabled()
+        expect(second.get_by_role("link", name="回到進行中的活動")).to_have_count(0)
         browser.close()

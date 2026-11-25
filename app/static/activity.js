@@ -69,6 +69,19 @@ async function home(session) {
     resume.href = activityUrl(session.active_activity);
     resume.hidden = false;
   }
+  const studentResume = document.querySelector("#student-resume");
+  const studentActivities = session.student_activities;
+  for (const activity of studentActivities) {
+    const label = studentActivities.length === 1
+      ? "回到進行中的活動"
+      : `回到進行中的活動（${activity.code}）`;
+    const link = element("a", label);
+    link.href = activityUrl(activity.id);
+    const row = element("p");
+    row.append(link);
+    studentResume.append(row);
+  }
+  studentResume.hidden = studentActivities.length === 0;
   attachForm(document.querySelector("#create"), async (data) => {
     const { id } = await request("/activities", "POST", { group_limit: integer(data.get("limit")) });
     location.assign(activityUrl(id));
@@ -283,6 +296,12 @@ async function initialize() {
       setTimeout(initialize, 1000);
     }
   }
+}
+
+if (!activityId) {
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) location.reload();
+  });
 }
 
 initialize();

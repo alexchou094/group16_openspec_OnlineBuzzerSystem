@@ -47,6 +47,15 @@ class ActivityService:
             raise ActivityError(409, "請先取消或結束目前的活動。")
         return activity
 
+    def student_activities(self, session: str) -> list[dict[str, str]]:
+        activities = []
+        for entry in self.repository.active_entries():
+            with entry.lock:
+                activity = entry.activity
+                if activity.phase not in TERMINAL_PHASES and session in activity.memberships:
+                    activities.append({"id": activity.id, "code": activity.code})
+        return activities
+
     def join(self, session: str, code: str, number: int, credential: str | None) -> str:
         activity_id = self.repository.activity_id_for_code(code.strip().upper())
         if activity_id is None:

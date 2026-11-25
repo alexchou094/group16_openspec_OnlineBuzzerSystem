@@ -68,3 +68,24 @@ def test_session_mutations_and_student_projection(app):
         with TestClient(create_app(hosts=("testserver",))) as restarted:
             restarted.cookies.update(teacher.cookies)
             assert restarted.get(path + "/state").status_code == 404
+
+
+def test_student_session_lists_only_current_activity_memberships(app):
+    with TestClient(app) as first_teacher, TestClient(app) as second_teacher, TestClient(app) as student:
+        first_headers = authenticate(first_teacher)
+        second_headers = authenticate(second_teacher)
+        student_headers = authenticate(student)
+        first = first_teacher.post("/activities", headers=first_headers, json={"group_limit": 1}).json()
+        second = second_teacher.post("/activities", headers=second_headers, json={"group_limit": 1}).json()
+
+        assert student.get("/api/session").json()["student_activities"] == []
+        for activity in (first, second):
+            student.post("/activities/join", headers=student_headers,
+                         json={"code": activity["code"], "group_number": 1}).raise_for_status()
+        assert student.get("/api/session").json()["student_activities"] == [first, second]
+        assert first_teacher.get("/api/session").json()["active_activity"] == first["id"]
+
+        student.post(f"/activities/{first['id']}/leave", headers=student_headers).raise_for_status()
+        assert student.get("/api/session").json()["student_activities"] == [second]
+        second_teacher.post(f"/activities/{second['id']}/cancel", headers=second_headers).raise_for_status()
+        assert student.get("/api/session").json()["student_activities"] == []

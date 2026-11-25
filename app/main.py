@@ -2,6 +2,7 @@ import asyncio
 import os
 import secrets
 from contextlib import asynccontextmanager, suppress
+from hashlib import sha256
 from pathlib import Path
 from typing import Annotated
 
@@ -66,6 +67,7 @@ def create_app(service: ActivityService | None = None, *, demo: bool = False,
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(hosts))
     app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
     templates = Jinja2Templates(directory=ROOT / "templates")
+    activity_script_version = sha256((ROOT / "static" / "activity.js").read_bytes()).hexdigest()[:12]
 
     @app.middleware("http")
     async def prevent_private_caching(request, call_next):
@@ -104,7 +106,8 @@ def create_app(service: ActivityService | None = None, *, demo: bool = False,
 
     def render(request: Request, activity_id: str = ""):
         return templates.TemplateResponse(request=request, name="index.html",
-                                          context={"activity_id": activity_id, "demo": demo})
+                                          context={"activity_id": activity_id, "demo": demo,
+                                                   "activity_script_version": activity_script_version})
 
     @app.get("/", include_in_schema=False)
     def index(request: Request):
@@ -121,7 +124,11 @@ def create_app(service: ActivityService | None = None, *, demo: bool = False,
             session = repository.new_session()
             response.set_cookie(COOKIE, session.id, httponly=True, samesite="strict",
                                 secure=request.url.scheme == "https")
-        return {"csrf_token": session.csrf, "active_activity": repository.active_activity_id(session.id)}
+        return {
+            "csrf_token": session.csrf,
+            "active_activity": repository.active_activity_id(session.id),
+            "student_activities": service.student_activities(session.id),
+        }
 
     @app.post("/activities", status_code=201)
     def create(body: CreateBody, session: Mutation):

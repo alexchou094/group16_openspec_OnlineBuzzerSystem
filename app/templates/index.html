@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>課堂搶答系統</title>
   <link rel="stylesheet" href="/static/activity.css">
-  <script type="module" src="/static/activity.js"></script>
+  <script type="module" src="/static/activity.js?v={{ activity_script_version }}"></script>
 </head>
 <body data-activity="{{ activity_id }}" data-demo="{{ 'yes' if demo else 'no' }}">
   <header><a href="/">課堂搶答系統</a></header>
@@ -24,6 +24,7 @@
       </section>
       <section>
         <h2>學生加入活動</h2>
+        <div id="student-resume" hidden></div>
         <form id="join" method="post">
           <label>活動代碼 <input name="code" required autocomplete="off"></label>
           <label>組號 <input name="number" type="number" min="1" step="1" required></label>
