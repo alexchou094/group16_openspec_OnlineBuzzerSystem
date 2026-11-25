@@ -21,6 +21,7 @@ from app.services.activities import ActivityError, ActivityService
 
 ROOT = Path(__file__).parent
 COOKIE = "buzzer_session"
+COOKIE_MAX_AGE = 400 * 24 * 60 * 60
 
 
 class CreateBody(BaseModel):
@@ -122,8 +123,8 @@ def create_app(service: ActivityService | None = None, *, demo: bool = False,
         session = repository.session(request.cookies.get(COOKIE))
         if session is None:
             session = repository.new_session()
-            response.set_cookie(COOKIE, session.id, httponly=True, samesite="strict",
-                                secure=request.url.scheme == "https")
+        response.set_cookie(COOKIE, session.id, max_age=COOKIE_MAX_AGE, httponly=True,
+                            samesite="strict", secure=request.url.scheme == "https")
         return {
             "csrf_token": session.csrf,
             "active_activity": repository.active_activity_id(session.id),

@@ -107,3 +107,48 @@ def test_teacher_and_two_groups_sync(server):
         expect(second.get_by_role("button", name="加入活動")).to_be_enabled()
         expect(second.get_by_role("link", name="回到進行中的活動")).to_have_count(0)
         browser.close()
+
+
+def test_teacher_and_student_resume_after_browser_restart(server, tmp_path):
+    teacher_profile = tmp_path / "teacher"
+    student_profile = tmp_path / "student"
+
+    with sync_playwright() as playwright:
+        chromium = playwright.chromium
+        channel = os.getenv("BUZZER_BROWSER_CHANNEL") or None
+
+        teacher_context = chromium.launch_persistent_context(teacher_profile, channel=channel)
+        teacher = teacher_context.pages[0]
+        teacher.goto(server)
+        teacher.get_by_label("組數上限").fill("1")
+        teacher.get_by_role("button", name="建立活動").click()
+        expect(teacher.locator("#phase")).to_have_text("準備中")
+        activity_url = teacher.url
+        code = teacher.locator("#identity").inner_text().split()[1]
+        teacher_context.close()
+
+        student_context = chromium.launch_persistent_context(student_profile, channel=channel)
+        student = student_context.pages[0]
+        student.goto(server)
+        student.get_by_label("活動代碼").fill(code)
+        student.get_by_label("組號", exact=True).fill("1")
+        student.get_by_role("button", name="加入活動").click()
+        expect(student.locator("#identity")).to_contain_text("第 1 組")
+        student_context.close()
+
+        student_context = chromium.launch_persistent_context(student_profile, channel=channel)
+        student = student_context.pages[0]
+        student.goto(server)
+        student.get_by_role("link", name="回到進行中的活動", exact=True).click()
+        expect(student.locator("#identity")).to_contain_text("第 1 組")
+
+        teacher_context = chromium.launch_persistent_context(teacher_profile, channel=channel)
+        teacher = teacher_context.pages[0]
+        teacher.goto(activity_url)
+        expect(teacher.locator("#identity")).to_contain_text(code)
+        teacher.get_by_role("button", name="取消活動").click()
+        expect(teacher.locator("#phase")).to_have_text("已取消")
+        teacher_context.close()
+
+        expect(student.locator("#phase")).to_have_text("已取消")
+        student_context.close()
