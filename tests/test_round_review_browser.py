@@ -2,6 +2,7 @@ import os
 import socket
 import time
 from threading import Thread
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import uvicorn
@@ -9,8 +10,12 @@ from playwright.sync_api import sync_playwright, expect
 
 from app.main import create_app
 from app.domain.activity import Blank, Question, SourceSnapshot
+from app.domain.guided_notes import parse_worksheet
+from app.adapters.guided_notes import SheetWriteUncertain
 from app.repositories.memory import MemoryRepository
 from app.services.activities import ActivityService
+from app.web import guided_notes
+from test_result_export import FakeWriter, finish_review, win
 
 pytestmark = pytest.mark.skipif(os.getenv('BUZZER_BROWSER_TEST') != '1', reason='需啟用瀏覽器測試')
 
@@ -47,6 +52,88 @@ def server():
         server.should_exit = True
         thread.join(5)
         listener.close()
+
+
+def test_export_page_from_open_round_and_cancelled_activity(
+    server, mixed_sheet, update_cell, monkeypatch, google_settings,
+):
+    url, service = server
+    writer = FakeWriter(mixed_sheet, update_cell)
+    writer.write_error = SheetWriteUncertain("模擬寫入後回應遺失")
+    monkeypatch.setattr(guided_notes, "GoogleWorksheetReader", lambda *_args: writer)
+
+    def headers(page):
+        csrf = page.request.get(url + "/api/session").json()["csrf_token"]
+        return {"Origin": url, "X-CSRF-Token": csrf}
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(channel=os.getenv("BUZZER_BROWSER_CHANNEL") or None)
+        teacher, student = [browser.new_context().new_page() for _ in range(2)]
+        teacher.goto(url)
+        teacher.get_by_label("組數上限").fill("3")
+        teacher.get_by_role("button", name="建立活動").click()
+        expect(teacher.locator("#phase")).to_have_text("準備中")
+        activity_url = teacher.url
+        activity = service.repository.get(activity_url.rsplit("/", 1)[1]).activity
+        source, questions = parse_worksheet(mixed_sheet)
+        service.replace_questions(activity.id, activity.owner, source, questions)
+        service.join("1", activity.code, 1, None)
+        win(service, activity)
+        second = service.open_round(activity.id, activity.owner, ["q3"], False, None)
+        service.submit(activity.id, "1", second, "q3", ["尚未定案的內容"])
+
+        student_headers = headers(student)
+        student.request.post(url + "/activities/join", headers=student_headers,
+                             data={"code": activity.code, "group_number": 2})
+        student.goto(activity_url)
+        expect(student.locator("#phase")).to_have_text("搶答中")
+        expect(student.get_by_role("link", name="匯出定案成果")).to_have_count(0)
+        base = activity_url + "/exports"
+        assert student.request.get(base).status == 403
+        assert student.request.get(base + "/results.csv").status == 403
+        for suffix, body in [("preview", {}), ("write", {"preview_id": "invalid"}), ("oauth", {})]:
+            assert student.request.post(base + "/" + suffix, headers=student_headers, data=body).status == 403
+
+        teacher.get_by_role("link", name="匯出定案成果").click()
+        expect(teacher.get_by_role("heading", name="成果匯出")).to_be_visible()
+        expect(teacher.locator("tbody tr")).to_have_count(2)
+        expect(teacher.get_by_text("尚未定案的內容")).to_have_count(0)
+        with teacher.expect_download() as download:
+            teacher.get_by_role("link", name="下載 CSV").click()
+        csv_text = download.value.path().read_text(encoding="utf-8-sig")
+        assert "正確" in csv_text and "尚未定案的內容" not in csv_text
+
+        teacher_headers = headers(teacher)
+        assert teacher.request.post(base + "/write", data={"preview_id": "invalid"}).status == 403
+        oauth = teacher.request.post(base + "/oauth", headers=teacher_headers).json()
+        state = parse_qs(urlsplit(oauth["url"]).query)["state"][0]
+        callback = teacher.request.get(url + "/google/oauth/callback", params={"state": state, "code": "test-code"})
+        assert callback.ok and base.removeprefix(url) in callback.text()
+
+        teacher.get_by_role("button", name="確認覆寫").click()
+        progress = teacher.locator("#export-progress")
+        expect(progress).to_contain_text("待確認")
+        expect(teacher.get_by_role("button", name="重試此次寫回")).to_be_visible()
+        teacher.reload()
+        expect(progress).to_contain_text("待確認")
+        teacher.get_by_role("button", name="讀回核對").click()
+        expect(progress).to_contain_text("成功")
+        assert len(writer.writes) == 1
+
+        submission = activity.current_round.submissions["q3", activity.groups[1].id]
+        finish_review(service, activity, second, [(submission.id, "CORRECT")])
+        service.finish(activity.id, activity.owner)
+        teacher.reload()
+        expect(teacher.locator("tbody tr")).to_have_count(3)
+
+        cancelled = service.create(activity.owner, 1)
+        service.cancel(cancelled.id, activity.owner)
+        cancelled_base = f"{url}/activities/{cancelled.id}/exports"
+        assert teacher.request.get(cancelled_base).status == 409
+        assert teacher.request.get(cancelled_base + "/results.csv").status == 409
+        for suffix, body in [("preview", {}), ("write", {"preview_id": "invalid"})]:
+            assert teacher.request.post(cancelled_base + "/" + suffix, headers=teacher_headers, data=body).status == 409
+        browser.close()
 
 
 def test_four_contexts_review_recovery_and_isolation(server, tmp_path):

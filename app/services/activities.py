@@ -25,8 +25,8 @@ class ActivityService:
         self.clock = clock
         self.utc_offset = time.time() - clock()
 
-    def timestamp(self, monotonic: float) -> str:
-        return datetime.fromtimestamp(self.utc_offset + monotonic, UTC).isoformat()
+    def timestamp(self, monotonic: float, *, timespec: str = "auto") -> str:
+        return datetime.fromtimestamp(self.utc_offset + monotonic, UTC).isoformat(timespec=timespec)
 
     @contextmanager
     def locked(self, activity_id: str, session_id: str, role: str | None = None):

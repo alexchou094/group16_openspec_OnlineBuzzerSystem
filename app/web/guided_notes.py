@@ -20,7 +20,9 @@ from app.domain.activity import Phase
 from app.repositories.memory import Session
 from app.services.activities import ActivityError, ActivityService
 from app.services.guided_notes import GuidedNotesImport
+from app.services.result_export import ResultExport
 from app.web.google_oauth import OAUTH_WINDOW, exchange_code, start_flow
+from app.web.result_export import register_export_routes
 
 
 CALLBACK = "/google/oauth/callback"
@@ -54,6 +56,7 @@ class Authorization:
     browser_token: str
     valid_until: float
     flow: Flow | None
+    page: str = "import"
     grant: tuple[str, datetime] | None = None
     message: str = ""
 
@@ -68,8 +71,22 @@ def register_import_routes(
     existing_session: Callable[[Request], Session], authorized_mutation: Callable[[Request], Session],
 ) -> None:
     importer = GuidedNotesImport(service)
+    exporter = ResultExport(service)
     authorizations: dict[str, Authorization] = {}
     Mutation = Annotated[Session, Depends(authorized_mutation)]
+
+    def export_writer(activity_id: str):
+        authorization = authorizations.get(activity_id)
+        grant = authorization.grant if authorization else None
+
+        def writer():
+            if grant is None:
+                raise SheetAccessError(401, "請先授權 Google 再試一次。")
+            return GoogleWorksheetReader(*grant)
+
+        return writer
+
+    register_export_routes(app, templates, exporter, existing_session, authorized_mutation, export_writer)
 
     @app.exception_handler(SheetAccessError)
     async def sheet_error(_request, error):
@@ -117,6 +134,15 @@ def register_import_routes(
     @app.post("/activities/{activity_id}/import/oauth")
     async def authorize(activity_id: str, session: Mutation, request: Request):
         importer.check_preparing(activity_id, session.id)
+        return begin_authorization(activity_id, session, request, "import")
+
+    @app.post("/activities/{activity_id}/exports/oauth")
+    async def authorize_export(activity_id: str, session: Mutation, request: Request):
+        with exporter.locked(activity_id, session.id):
+            pass
+        return begin_authorization(activity_id, session, request, "exports")
+
+    def begin_authorization(activity_id: str, session: Session, request: Request, page: str):
         settings = GoogleSettings.from_environment()
         origin = f"{request.url.scheme}://{request.url.netloc}"
         try:
@@ -126,7 +152,7 @@ def register_import_routes(
         prune_authorizations()
         browser_token = secrets.token_urlsafe(32)
         authorizations[activity_id] = Authorization(
-            activity_id, session.id, state, browser_token, monotonic() + OAUTH_WINDOW, flow,
+            activity_id, session.id, state, browser_token, monotonic() + OAUTH_WINDOW, flow, page,
         )
         response = JSONResponse({"url": url})
         response.set_cookie(OAUTH_COOKIE, browser_token, max_age=OAUTH_WINDOW, httponly=True,
@@ -143,7 +169,14 @@ def register_import_routes(
                 or not secrets.compare_digest(supplied_state, authorization.state)):
             raise ActivityError(400, "無法驗證 Google 授權請求，請回匯入頁重新授權。")
         activity_id = authorization.activity_id
-        importer.check_preparing(activity_id, authorization.session_id)
+        def check_authorization():
+            if authorization.page == "import":
+                importer.check_preparing(activity_id, authorization.session_id)
+            else:
+                with exporter.locked(activity_id, authorization.session_id):
+                    pass
+
+        check_authorization()
         flow, authorization.flow = authorization.flow, None
         code = request.query_params.get("code")
         if monotonic() >= authorization.valid_until:
@@ -154,13 +187,13 @@ def register_import_routes(
             authorization.message = "Google 授權未完成，請重新授權。"
         else:
             grant = await run_in_threadpool(exchange_code, flow, code)
-            importer.check_preparing(activity_id, authorization.session_id)
+            check_authorization()
             authorization.grant = grant
             authorization.message = ("已授權 Google，可以選擇試算表。" if grant
                                      else "Google 授權交換失敗，請重新授權並確認設定。")
         # 先完成同站頁面導覽，再返回需要 Strict Cookie 的老師頁面。
         response = templates.TemplateResponse(request=request, name="google_oauth_return.html",
-                                              context={"activity_id": activity_id})
+                                              context={"activity_id": activity_id, "page": authorization.page})
         response.delete_cookie(OAUTH_COOKIE, path=CALLBACK)
         return response
 

@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from threading import Lock
 
 from app.domain.activity import Activity
+from app.domain.result_export import ExportSnapshot, WriteAttempt
 
 
 def new_id() -> str:
@@ -20,6 +21,8 @@ class ActivityEntry:
     activity: Activity
     lock: Lock = field(default_factory=Lock)
     projections: dict[str, tuple[int, dict]] = field(default_factory=dict)
+    export_preview: ExportSnapshot | None = None
+    export_attempts: dict[str, WriteAttempt] = field(default_factory=dict)
 
 
 class MemoryRepository:

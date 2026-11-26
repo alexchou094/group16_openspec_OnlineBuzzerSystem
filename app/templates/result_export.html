@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf }}">
+  <title>成果匯出 · 課堂搶答系統</title>
+  <link rel="stylesheet" href="/static/activity.css">
+  <script type="module" src="/static/result_export.js"></script>
+</head>
+<body>
+  <header><a href="/">課堂搶答系統</a></header>
+  <main class="import-page" data-export-url="/activities/{{ activity_id }}/exports"
+        data-attempt="{{ attempt.id if attempt else '' }}" data-status="{{ attempt.status if attempt else '' }}">
+    <a href="/activities/{{ activity_id }}">返回老師看板</a>
+    <h1>成果匯出</h1>
+    <section aria-labelledby="csv-heading">
+      <h2 id="csv-heading">提交紀錄 CSV</h2>
+      <p>包含所有已定案提交。可能觸發公式的答案前會加單引號作為文字保護，系統保存的答案原文不變。</p>
+      <a href="/activities/{{ activity_id }}/exports/results.csv" download>下載 CSV</a>
+    </section>
+    <section aria-labelledby="write-heading">
+      <h2 id="write-heading">Google Sheets 寫回預覽</h2>
+      {% if preview.cells %}
+      <p>將覆寫「{{ preview.source.title }}」中列出的 {{ preview.cells|length }} 格。寫回期間請勿修改學習單結構。</p>
+      <div class="export-table">
+        <table>
+          <thead><tr><th scope="col">題號</th><th scope="col">子空格</th><th scope="col">勝者組別</th><th scope="col">目標格</th><th scope="col">答案</th></tr></thead>
+          <tbody>
+          {% for cell in preview.cells %}
+            <tr><td>{{ cell.question }}</td><td>{{ cell.blank }}</td><td>{{ cell.group }}</td>
+                <td>{{ cell.target }}</td><td><div class="answer-text">{{ cell.answer }}</div></td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <button id="confirm-write" type="button" data-preview="{{ preview.id }}" disabled>確認覆寫</button>
+      <button id="authorize-export" type="button" class="secondary" disabled>重新授權 Google</button>
+      {% else %}
+      <p>目前沒有可寫回的已定案勝者答案。</p>
+      {% endif %}
+    </section>
+    <section aria-labelledby="progress-heading">
+      <h2 id="progress-heading">寫回進度</h2>
+      <p id="export-progress" role="status">尚未開始寫回。</p>
+      <p id="export-error" role="alert" hidden></p>
+      <button id="verify-write" type="button" hidden>讀回核對</button>
+      <button id="retry-write" type="button" hidden>重試此次寫回</button>
+      <a href="/activities/{{ activity_id }}/exports">更新預覽</a>
+    </section>
+  </main>
+</body>
+</html>
