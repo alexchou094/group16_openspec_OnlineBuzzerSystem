@@ -16,7 +16,7 @@ $env:BUZZER_GOOGLE_PICKER_KEY = 'PICKER_KEY'
 $env:BUZZER_GOOGLE_PROJECT_NUMBER = '專案編號'
 
 # 需要載入示範題時，取消下一行的註解。
-# $env:BUZZER_DEMO = '1'
+$env:BUZZER_DEMO = '1'
 
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log
 ```
