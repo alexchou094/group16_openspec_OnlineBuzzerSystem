@@ -53,9 +53,18 @@ class Submission:
 
 
 @dataclass(frozen=True)
+class CandidateResult:
+    submission_id: str
+    rank: int | None
+    successes_before: int
+
+
+@dataclass(frozen=True)
 class QuestionResult:
     question_id: str
     winner_group_id: str | None = None
+    candidates: tuple[CandidateResult, ...] = ()
+    reason: str = ""
 
 
 @dataclass
@@ -73,6 +82,8 @@ class Round:
     results: tuple[QuestionResult, ...] = ()
     review_version: int = 0
     finalized: bool = False
+    cumulative_counts: tuple[tuple[str, int], ...] = ()
+    affected_questions: tuple[str, ...] = ()
 
     def record_accepted(self, submission_id: str, question_id: str, group_id: str,
                         answers: tuple[str, ...], received_at: float) -> Submission:

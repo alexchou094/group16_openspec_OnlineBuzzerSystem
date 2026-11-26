@@ -3,12 +3,14 @@ import time
 from collections import Counter
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from dataclasses import replace
 from typing import Callable
 
 from app.domain.activity import (
-    TERMINAL_PHASES, Activity, Group, Phase, Question, QuestionResult, Round, SourceSnapshot,
+    TERMINAL_PHASES, Activity, Group, Phase, Question, Round, SourceSnapshot,
 )
 from app.repositories.memory import MemoryRepository, new_id
+from app.domain.ranking import fixed_order, rank
 
 
 class ActivityError(Exception):
@@ -156,6 +158,55 @@ class ActivityService:
                 self._close(activity, round_)
             return round_.review_version
 
+    def submit(self, activity_id, session, round_id, question_id, answers):
+        with self.locked(activity_id, session, "student") as entry:
+            activity = entry.activity
+            round_ = self._match_round(activity, round_id)
+            now = self.clock()
+            if round_.deadline is not None and now >= round_.deadline:
+                self._expire(activity)
+            if activity.phase != Phase.OPEN:
+                raise ActivityError(409, "本輪已結束，請更新活動狀態。")
+            question = next((q for q in activity.questions if q.id == question_id), None)
+            if question_id not in round_.question_ids or question is None:
+                raise ActivityError(422, "此題不在本輪開放範圍。")
+            if (not isinstance(answers, (list, tuple)) or len(answers) != len(question.blanks)
+                    or any(not isinstance(a, str) or not a.strip() for a in answers)):
+                raise ActivityError(422, "請一次填妥此題全部子空格，不得空白、缺格或多格。")
+            group = activity.groups[activity.memberships[session]]
+            duplicate = (question_id, group.id) in round_.submissions
+            submission = round_.record_accepted(new_id(), question_id, group.id, tuple(answers), now)
+            return {"already_submitted": duplicate, "message": "本組已送出" if duplicate else "提交成功",
+                    "submission": self._submission_data(submission, activity)}
+
+    def review(self, activity_id, session, round_id, submission_id, rejected, expected_review_version):
+        with self.locked(activity_id, session, "teacher") as entry:
+            activity = entry.activity
+            round_ = self._match_round(activity, round_id)
+            if activity.phase != Phase.RESULTS or round_.finalized:
+                raise ActivityError(409, "僅能修改本輪尚未定案的結果。")
+            if expected_review_version != round_.review_version:
+                raise ActivityError(409, "結果版本已更新，請重新檢視。")
+            if type(rejected) is not bool:
+                raise ActivityError(422, "判錯狀態須為布林值。")
+            key = next((k for k, s in round_.submissions.items() if s.id == submission_id), None)
+            if key is None:
+                raise ActivityError(404, "提交不存在。")
+            original = round_.submissions[key]
+            if original.rejected != rejected:
+                round_.submissions[key] = replace(original, rejected=rejected)
+                results, counts = rank(round_, round_.fixed_question_order)
+                round_.affected_questions = tuple(new.question_id for old, new in zip(round_.results, results) if old != new)
+                round_.results, round_.cumulative_counts = results, counts
+                round_.review_version += 1
+            return round_.review_version
+
+    def _submission_data(self, submission, activity):
+        return {"id": submission.id, "question_id": submission.question_id,
+                "group": next(g.number for g in activity.groups.values() if g.id == submission.group_id),
+                "answers": list(submission.answers), "received_at": self.timestamp(submission.received_at),
+                "rejected": submission.rejected}
+
     def finalize(self, activity_id: str, session: str, round_id: str, expected_review_version: int) -> None:
         with self.locked(activity_id, session, "teacher") as entry:
             activity = entry.activity
@@ -204,14 +255,26 @@ class ActivityService:
                 return {"number": item.number, "credential": item.credential, "successes": counts[item.id]}
 
             def round_data(round_: Round) -> dict:
+                public = round_.review_version > 0
+                results = round_.results if public else rank(round_, fixed_order(round_, activity.questions))[0] if teacher else ()
+                submissions = {s.id: s for s in round_.submissions.values()}
                 return {
                     "id": round_.id, "number": round_.number,
                     "fairness_enabled": round_.fairness_enabled,
                     "questions": [questions[q].number for q in round_.question_ids],
+                    "question_details": [{"id": q, "number": questions[q].number,
+                                          "blanks": [b.label for b in questions[q].blanks]} for q in round_.question_ids],
+                    "submissions": [self._submission_data(s, activity) for s in submissions.values()
+                                    if public or teacher or s.group_id == group.id],
+                    "affected_questions": [questions[q].number for q in round_.affected_questions],
+                    "cumulative_counts": [{"group": groups[g], "successes": n} for g, n in round_.cumulative_counts if g in groups],
                     "deadline": None if round_.deadline is None else self.timestamp(round_.deadline),
                     "review_version": round_.review_version, "finalized": round_.finalized,
                     "results": [{"question": questions[result.question_id].number,
-                                 "winner": groups.get(result.winner_group_id)} for result in round_.results],
+                                 "winner": groups.get(result.winner_group_id), "reason": result.reason,
+                                 "candidates": [{**self._submission_data(submissions[c.submission_id], activity),
+                                                 "rank": c.rank, "successes_before": c.successes_before}
+                                                for c in result.candidates]} for result in results],
                 }
 
             view = {
@@ -260,28 +323,7 @@ class ActivityService:
 
     @staticmethod
     def _close(activity: Activity, round_: Round) -> None:
-        candidates = {q: [] for q in round_.question_ids}
-        for submission in round_.submissions.values():
-            candidates[submission.question_id].append(submission)
-
-        def reception(submission):
-            return submission.received_at, submission.receive_sequence
-
-        numbers = {q.id: q.number for q in activity.questions}
-        counts = Counter(round_.baseline)
-        question_order = sorted(candidates, key=lambda q: (
-            min(map(reception, candidates[q]), default=(float("inf"), 0)), numbers[q],
-        ))
-        results = []
-        for question_id in question_order:
-            accepted = (sub for sub in candidates[question_id] if not sub.rejected)
-            winner = min(accepted, default=None, key=lambda sub: (
-                counts[sub.group_id] if round_.fairness_enabled else 0, *reception(sub),
-            ))
-            results.append(QuestionResult(question_id, winner.group_id if winner else None))
-            if winner:
-                counts[winner.group_id] += 1
-        round_.fixed_question_order = tuple(question_order)
-        round_.results = tuple(results)
+        round_.fixed_question_order = fixed_order(round_, activity.questions)
+        round_.results, round_.cumulative_counts = rank(round_, round_.fixed_question_order)
         round_.review_version = 1
         activity.phase = Phase.RESULTS

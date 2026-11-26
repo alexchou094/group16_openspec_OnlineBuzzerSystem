@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, StrictBool, StrictInt
+from pydantic import BaseModel, StrictBool, StrictInt, ConfigDict
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -42,6 +42,17 @@ class OpenRoundBody(BaseModel):
 
 class FinalizeBody(BaseModel):
     expected_review_version: StrictInt
+
+
+class SubmissionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    question_id: str
+    answers: list[str]
+
+
+class ReviewBody(FinalizeBody):
+    model_config = ConfigDict(extra="forbid")
+    rejected: StrictBool
 
 
 def create_app(service: ActivityService | None = None, *, demo: bool = False,
@@ -162,6 +173,15 @@ def create_app(service: ActivityService | None = None, *, demo: bool = False,
     @app.post("/activities/{activity_id}/rounds/{round_id}/close")
     def close_round(activity_id: str, round_id: str, session: Mutation):
         return {"review_version": service.close_round(activity_id, session.id, round_id)}
+
+    @app.post("/activities/{activity_id}/rounds/{round_id}/submissions")
+    def submit(activity_id: str, round_id: str, body: SubmissionBody, session: Mutation):
+        return service.submit(activity_id, session.id, round_id, body.question_id, body.answers)
+
+    @app.patch("/activities/{activity_id}/rounds/{round_id}/reviews/{submission_id}")
+    def review(activity_id: str, round_id: str, submission_id: str, body: ReviewBody, session: Mutation):
+        return {"review_version": service.review(activity_id, session.id, round_id, submission_id,
+                                                body.rejected, body.expected_review_version)}
 
     @app.post("/activities/{activity_id}/rounds/{round_id}/finalize", status_code=204)
     def finalize(activity_id: str, round_id: str, body: FinalizeBody, session: Mutation):

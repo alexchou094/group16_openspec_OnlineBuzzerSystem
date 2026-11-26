@@ -161,14 +161,73 @@ function resultsPanel(state) {
   for (const round of rounds.values()) {
     section.append(element("h3", `第 ${round.number} 輪 · ${round.finalized ? "已定案" : "暫定"}`));
     const list = element("ul");
+    if (round.affected_questions.length) section.append(element("p", `結果更新：第 ${round.affected_questions.join('、')} 題`));
     for (const result of round.results) {
-      list.append(element("li", `第 ${result.question} 題 · ${result.winner === null ? "未成功" : `第 ${result.winner} 組勝出`}`));
+      const row = element("li", `第 ${result.question} 題 · ${result.winner === null ? "未成功" : `第 ${result.winner} 組勝出`} · ${result.reason}`);
+      const candidates = element("ul");
+      for (const candidate of result.candidates) {
+        const item = element("li", `第 ${candidate.group} 組 · ${candidate.rejected ? '判錯' : `順位 ${candidate.rank}`} · 處理時成功 ${candidate.successes_before} 題 · ${candidate.answers.join(' ／ ')}`);
+        if (state.role === "teacher" && !round.finalized && state.phase === "RESULTS" && round.id === state.round.id) {
+          item.append(button(candidate.rejected ? "撤銷判錯" : "判錯", `rounds/${round.id}/reviews/${candidate.id}`, {
+            method: "PATCH", body: { rejected: !candidate.rejected, expected_review_version: round.review_version },
+          }));
+        }
+        candidates.append(item);
+      }
+      row.append(candidates);
+      list.append(row);
     }
     section.append(list);
   }
   if (state.phase === "FINISHED") {
     const remaining = state.unsuccessful_questions.map((q) => `第 ${q} 題`).join("、") || "無";
     section.append(element("p", `未成功題目：${remaining}`));
+  }
+  return section;
+}
+
+function submissionPanel(state) {
+  const section = element("section");
+  section.id = "submissions";
+  section.append(element("h2", state.role === "teacher" ? "即時提交（順位暫估、未定案）" : "本組作答"));
+  const round = state.round;
+  for (const q of round.question_details) {
+    const block = element("div");
+    block.append(element("h3", `第 ${q.number} 題`));
+    const sent = round.submissions.filter(s => s.question_id === q.id);
+    for (const s of sent) block.append(element("p", `第 ${s.group} 組 · 本組已送出：${s.answers.join(' ／ ')}`));
+    if (state.role === "teacher") {
+      for (const group of state.groups.filter(g => !sent.some(s => s.group === g.number))) {
+        block.append(element("p", `第 ${group.number} 組 · 未送出`));
+      }
+      const result = round.results.find(r => r.question === q.number);
+      for (const c of result?.candidates ?? []) block.append(element("p", `暫估順位 ${c.rank}：第 ${c.group} 組`));
+    } else if (!sent.length) {
+      const form = element("form");
+      form.dataset.question = q.id;
+      for (const label of q.blanks) {
+        const wrapper = element("label", `第 ${q.number} 題・空格 ${label}`);
+        const input = element("textarea");
+        input.name = "answer";
+        input.required = true;
+        wrapper.append(input);
+        form.append(wrapper);
+      }
+      const submit = element("button", `送出第 ${q.number} 題`);
+      submit.type = "submit";
+      form.append(submit);
+      attachForm(form, async data => {
+        try {
+          const response = await request(actionUrl(`rounds/${round.id}/submissions`), "POST", { question_id: q.id, answers: data.getAll("answer") });
+          notify(response.message);
+        } catch (error) {
+          notify(error instanceof RequestError ? error.message : "提交回應未收到，結果待確認；請等待同步或重送，本組只會保留第一筆有效答案。");
+        }
+        await sync();
+      });
+      block.append(form);
+    }
+    section.append(block);
   }
   return section;
 }
@@ -200,6 +259,7 @@ function renderPanels(state) {
   if (phase === "OPEN") controls.append(element("p", `開放題目：${round.questions.map((n) => `第 ${n} 題`).join("、")}`));
 
   const sections = controls.children.length > 1 ? [controls] : [];
+  if (phase === "OPEN") sections.push(submissionPanel(state));
   if (teacher) {
     const groups = element("section");
     groups.append(element("h2", "組別與加入憑證"));
@@ -223,6 +283,13 @@ function renderPanels(state) {
     for (const child of Array.from(panels.children).slice(1)) child.remove();
     panels.append(...sections.slice(1));
   } else {
+    // 同組其他題更新時，保留尚未提交題目的輸入。
+    if (current?.round?.id === round?.id && phase === "OPEN") {
+      for (const form of panels.querySelectorAll('form[data-question]')) {
+        const replacement = sections.flatMap(s => Array.from(s.querySelectorAll('form[data-question]'))).find(f => f.dataset.question === form.dataset.question);
+        if (replacement) replacement.replaceWith(form);
+      }
+    }
     panels.replaceChildren(...sections);
   }
   controlsKey = nextKey;
@@ -243,8 +310,11 @@ function render(state) {
 
 function showTimer() {
   const timer = document.querySelector("#timer");
-  timer.textContent = current?.phase !== "OPEN" ? "" : deadline === null ? "無倒數"
+  timer.textContent = current?.phase !== "OPEN" ? "" : deadline === null ? "無倒數，由老師結束"
     : `剩餘 ${Math.max(0, Math.ceil((deadline - performance.now()) / 1000))} 秒`;
+  for (const submit of document.querySelectorAll('#submissions button[type="submit"]')) {
+    submit.disabled = deadline !== null && performance.now() >= deadline;
+  }
 }
 
 async function sync() {
@@ -253,6 +323,7 @@ async function sync() {
   try {
     const state = await request(actionUrl("state"));
     if (requestId !== latestRequest) return;
+    if (current && state.state_version < current.state_version) return;
     connection.textContent = "已同步";
     connection.dataset.offline = "false";
     deadline = state.round?.deadline ? performance.now() + Date.parse(state.round.deadline) - Date.parse(state.server_time) : null;

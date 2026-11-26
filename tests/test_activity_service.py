@@ -176,7 +176,8 @@ def test_lifecycle_preserves_history_when_devices_change_group(system):
     service.finish(activity.id, "teacher")
     final = service.state(activity.id, "student")
     assert final["phase"] == "FINISHED" and final["unsuccessful_questions"] == [2]
-    assert final["history"][0]["results"][0] == {"question": 1, "winner": 1}
+    historical = final["history"][0]["results"][0]
+    assert {key: historical[key] for key in ("question", "winner")} == {"question": 1, "winner": 1}
     assert len(final["history"]) == 2
     with pytest.raises(ActivityError, match="結束"):
         service.join("new", activity.code, 2, None)

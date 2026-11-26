@@ -15,7 +15,11 @@ p { margin: .6rem 0; }
 .overview, section { background: white; border: 1px solid #ccddd6; border-radius: .8rem; padding: 1rem; }
 form { display: grid; gap: .8rem; margin-top: .8rem; }
 label { display: block; }
-input, select, button { font: inherit; }
+input, select, button, textarea { font: inherit; }
+textarea { display: block; box-sizing: border-box; width: 100%; min-height: 5rem; padding: .55rem; }
+#submissions > div { border-top: 1px solid #ccddd6; margin-top: 1rem; }
+#panels { display: grid; gap: 1rem; }
+#panels li { white-space: pre-wrap; overflow-wrap: anywhere; }
 input:not([type="checkbox"]), select { display: block; box-sizing: border-box; width: 100%; padding: .55rem; border: 1px solid #6a8178; border-radius: .35rem; }
 button { width: fit-content; margin: .25rem .4rem .25rem 0; border: 1px solid #175e4c; border-radius: .4rem; padding: .55rem .85rem; background: #175e4c; color: white; cursor: pointer; }
 button:disabled { opacity: .55; cursor: wait; }
