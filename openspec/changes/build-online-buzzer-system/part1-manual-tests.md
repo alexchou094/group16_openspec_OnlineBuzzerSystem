@@ -1,5 +1,16 @@
 # 第 1 節人工測試
 
+## 1.1–1.3 本機環境與需求對齊
+
+在專案根目錄用 PowerShell 執行 [README 的本機啟動步驟](../../../README.md#本機啟動)。使用新的虛擬環境可以重現乾淨安裝。
+
+| 案例 | 操作 | 預期結果 |
+| --- | --- | --- |
+| A1 安裝與啟動 | 在新的 Python 3.14 虛擬環境安裝 `requirements-dev.txt`。執行 `python -m pip check`，再依 README 啟動單 worker。 | 依賴檢查無衝突，`http://127.0.0.1:8000` 顯示搶答首頁。 |
+| A2 身分與重啟 | 老師建立上限為 2 的活動。另兩個瀏覽器設定檔分別加入第 1、2 組。在老師的同設定檔開第二個活動頁，然後停止並重啟服務。 | 老師分頁共用控制權，學生各自看到本組身分。重啟後舊活動頁失效。 |
+| A3 設定與忽略規則 | 執行 `git check-ignore .env credentials/client_secret.json token-test.json`，打開 `.env.example`。 | 指令列出三個假路徑，設定範例只有空值。 |
+| A4 對齊 | 開啟 [需求對齊檢核表](requirements-alignment.md)，依兩組規格核對編號、11/22 決議及其他規則。 | C1–C9／E1–E6 皆有驗收位置。組員可在表中記錄確認日期、結論及待確認事項。 |
+
 ## 1.4 Google OAuth／Picker
 
 ### 準備

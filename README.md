@@ -4,15 +4,24 @@
 
 ## 本機啟動
 
-在專案根目錄使用 PowerShell。開發與測試使用 Python 3.14。
+在 Windows 開啟 PowerShell。若提示符已顯示你在專案根目錄，可以直接執行啟動指令。若目前在其他目錄，可用環境變數 `$env:USERPROFILE` 切換目錄。下方路徑以本機資料夾名稱為例。
+
+```powershell
+Set-Location "$env:USERPROFILE\OneDrive\Desktop\software_engineering\sw_fianl\spec_final"
+```
+
+開發與測試使用 Python 3.14。第一次啟動請執行以下指令。
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+$env:BUZZER_DEMO = '1'
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-開啟 `http://127.0.0.1:8000`。活動和瀏覽器工作階段保存在單一伺服器程序的記憶體。重啟會清空活動，舊活動頁會顯示失效。請使用單 worker，並用不同瀏覽器設定檔或獨立瀏覽器 context 模擬老師、第一組和第二組。同一設定檔的多個分頁會共用身分。伺服器持續運作時，使用保留網站 Cookie 的同一設定檔重開瀏覽器，開啟原活動網址即可恢復老師或學生身分。
+用瀏覽器開啟 [搶答系統首頁](http://127.0.0.1:8000)。要停止服務，在執行伺服器的 PowerShell 視窗按 `Ctrl+C`。
+
+活動和瀏覽器工作階段保存在單一伺服器程序的記憶體。重啟會清空活動，舊活動頁會顯示失效。請使用單 worker，並用不同瀏覽器設定檔或獨立瀏覽器 context 模擬老師、第一組和第二組。同一設定檔的多個分頁會共用身分。伺服器持續運作時，使用保留網站 Cookie 的同一設定檔重開瀏覽器，開啟原活動網址即可恢復老師或學生身分。
 
 一般活動示範不需要 Google 憑證。環境變數欄位見 [.env.example](.env.example)，請在啟動服務的 PowerShell 視窗設定。Google OAuth Web 用戶端 JSON 放在專案外的私有目錄，或專案內已忽略的 `credentials/`。Google Cloud 設定、驗證工具啟動與人工測試見 [第 1 節人工測試](openspec/changes/build-online-buzzer-system/part1-manual-tests.md)。
 
@@ -26,6 +35,23 @@ python -m venv .venv
 4. 老師手動關輪，或等待倒數到期。定案後可開下一輪或結束活動。結束頁會保留結果並列出未成功題目。
 
 ## 測試
+
+### 乾淨環境啟動驗收
+
+在專案根目錄執行以下指令。若已在連接埠 8000 啟動本專案，先按 `Ctrl+C` 停止服務。
+
+```powershell
+python -m venv .verify-venv/manual-part1
+$testPython = ".\.verify-venv\manual-part1\Scripts\python.exe"
+& $testPython -m pip install -r requirements-dev.txt
+& $testPython -m pip check
+$env:BUZZER_DEMO = '1'
+& $testPython -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+```
+
+確認 `pip check` 顯示 `No broken requirements found.`，再開啟 [搶答系統首頁](http://127.0.0.1:8000)。
+
+### 自動化測試
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
