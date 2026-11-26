@@ -15,7 +15,7 @@ from pydantic import BaseModel, StrictBool, StrictInt, ConfigDict
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.domain.activity import Blank, Question, SourceSnapshot
+from app.domain.activity import Blank, Question, SourceSnapshot, ReviewStatus
 from app.repositories.memory import MemoryRepository, Session
 from app.services.activities import ActivityError, ActivityService
 from app.web.guided_notes import CALLBACK as GOOGLE_CALLBACK, register_import_routes
@@ -53,7 +53,7 @@ class SubmissionBody(BaseModel):
 
 class ReviewBody(FinalizeBody):
     model_config = ConfigDict(extra="forbid")
-    rejected: StrictBool
+    review_status: ReviewStatus
 
 
 def create_app(service: ActivityService | None = None, *, demo: bool = False,
@@ -185,7 +185,7 @@ def create_app(service: ActivityService | None = None, *, demo: bool = False,
     @app.patch("/activities/{activity_id}/rounds/{round_id}/reviews/{submission_id}")
     def review(activity_id: str, round_id: str, submission_id: str, body: ReviewBody, session: Mutation):
         return {"review_version": service.review(activity_id, session.id, round_id, submission_id,
-                                                body.rejected, body.expected_review_version)}
+                                                body.review_status, body.expected_review_version)}
 
     @app.post("/activities/{activity_id}/rounds/{round_id}/finalize", status_code=204)
     def finalize(activity_id: str, round_id: str, body: FinalizeBody, session: Mutation):

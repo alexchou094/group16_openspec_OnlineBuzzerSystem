@@ -13,6 +13,12 @@ class Phase(StrEnum):
 TERMINAL_PHASES = {Phase.CANCELLED, Phase.FINISHED}
 
 
+class ReviewStatus(StrEnum):
+    UNREVIEWED = "UNREVIEWED"
+    INCORRECT = "INCORRECT"
+    CORRECT = "CORRECT"
+
+
 @dataclass(frozen=True)
 class Blank:
     label: str
@@ -51,14 +57,18 @@ class Submission:
     answers: tuple[str, ...]
     received_at: float
     receive_sequence: int
-    rejected: bool = False
+    review_status: ReviewStatus = ReviewStatus.UNREVIEWED
+
+    @property
+    def rejected(self) -> bool:
+        return self.review_status == ReviewStatus.INCORRECT
 
 
 @dataclass(frozen=True)
 class CandidateResult:
     submission_id: str
     rank: int | None
-    successes_before: int
+    successes_before: int | None
 
 
 @dataclass(frozen=True)
@@ -67,6 +77,8 @@ class QuestionResult:
     winner_group_id: str | None = None
     candidates: tuple[CandidateResult, ...] = ()
     reason: str = ""
+    status: str = "PENDING"
+    current_submission_id: str | None = None
 
 
 @dataclass

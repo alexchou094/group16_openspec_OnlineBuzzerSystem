@@ -4,7 +4,7 @@ from threading import Barrier
 
 import pytest
 
-from app.domain.activity import Blank, Phase, Question, SourceSnapshot
+from app.domain.activity import Blank, Phase, Question, SourceSnapshot, ReviewStatus
 from app.repositories.memory import MemoryRepository
 from app.services.activities import ActivityError, ActivityService
 
@@ -151,7 +151,8 @@ def test_lifecycle_preserves_history_when_devices_change_group(system):
         assert current.record_accepted("repeat", "q1", first.id, ("不同答案",), now[0]) is accepted
         rejected = current.record_accepted("two", "q2", first.id, ("答案",), now[0])
         assert (accepted.receive_sequence, rejected.receive_sequence) == (1, 2)
-        current.submissions["q2", first.id] = replace(rejected, rejected=True)
+        current.submissions["q1", first.id] = replace(accepted, review_status=ReviewStatus.CORRECT)
+        current.submissions["q2", first.id] = replace(rejected, review_status=ReviewStatus.INCORRECT)
     service.close_round(activity.id, "teacher", round_id)
     with pytest.raises(ActivityError, match="定案"):
         service.open_round(activity.id, "teacher", None, True, None)
@@ -192,7 +193,7 @@ def test_group_with_only_rejected_submission_cannot_be_deleted(system):
     with service.locked(activity.id, "teacher"):
         group = activity.groups[1]
         sub = activity.current_round.record_accepted("id", "q1", group.id, ("答案",), now[0])
-        activity.current_round.submissions["q1", group.id] = replace(sub, rejected=True)
+        activity.current_round.submissions["q1", group.id] = replace(sub, review_status=ReviewStatus.INCORRECT)
     service.close_round(activity.id, "teacher", round_id)
     with pytest.raises(ActivityError, match="提交"):
         service.delete_group(activity.id, "teacher", 1)

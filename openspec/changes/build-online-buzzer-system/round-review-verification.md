@@ -1,5 +1,7 @@
 # 第 4、5 組需求與驗證紀錄
 
+> 舊版歷史紀錄：本文件的布林判錯及自動暫定勝者語意已被三態逐筆審閱規格取代。新版驗證請見 [round-review-v2-verification.md](round-review-v2-verification.md)。
+
 範圍：4.1–4.6、5.1–5.5。文件位置為本 change 目錄；操作說明見同目錄 round-review-operations.md。起始 Git 工作目錄乾淨，未找到適用 AGENTS.md。沿用第 2 組模型、服務、HTTP 身分與投影；共用檔修改僅為提交、順位、審閱及畫面交接。不修改依賴、設定或第 1 組基礎。
 
 ## 需求 → 實作 → 驗證對照

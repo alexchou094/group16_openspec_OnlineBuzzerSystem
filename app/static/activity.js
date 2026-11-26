@@ -98,10 +98,11 @@ function actionUrl(path) {
   return `${activityUrl(activityId)}/${path}`;
 }
 
-function button(label, path, { method = "POST", body, leave = false } = {}) {
+function button(label, path, { method = "POST", body, leave = false, confirmation } = {}) {
   const node = element("button", label);
   node.type = "button";
   node.addEventListener("click", async () => {
+    if (confirmation && !window.confirm(confirmation)) return;
     node.disabled = true;
     notify();
     try {
@@ -159,18 +160,33 @@ function resultsPanel(state) {
   if (state.round?.review_version) rounds.set(state.round.id, state.round);
   section.append(element("h2", "輪次結果"));
   for (const round of rounds.values()) {
-    section.append(element("h3", `第 ${round.number} 輪 · ${round.finalized ? "已定案" : "暫定"}`));
+    section.append(element("h3", `第 ${round.number} 輪 · ${round.finalized ? "已定案" : round.review_complete ? "暫定，待定案" : "待審閱"}`));
     const list = element("ul");
     if (round.affected_questions.length) section.append(element("p", `結果更新：第 ${round.affected_questions.join('、')} 題`));
     for (const result of round.results) {
-      const row = element("li", `第 ${result.question} 題 · ${result.winner === null ? "未成功" : `第 ${result.winner} 組勝出`} · ${result.reason}`);
+      const summary = result.status === "WAITING" ? "等待前題審閱" : result.status === "PENDING" ? "待審閱"
+        : result.winner === null ? "未成功" : `第 ${result.winner} 組勝出`;
+      const row = element("li", `第 ${result.question} 題 · ${summary} · ${result.reason}`);
+      row.dataset.question = result.question;
       const candidates = element("ul");
       for (const candidate of result.candidates) {
-        const item = element("li", `第 ${candidate.group} 組 · ${candidate.rejected ? '判錯' : `順位 ${candidate.rank}`} · 處理時成功 ${candidate.successes_before} 題 · ${candidate.answers.join(' ／ ')}`);
+        const outcome = candidate.rejected ? "判錯 · 搶答失敗" : candidate.review_status === "CORRECT" ? "正確 · 搶答成功"
+          : result.status === "COMPLETE" ? "搶答失敗" : "待審閱";
+        const position = candidate.rank === null ? "" : ` · 順位 ${candidate.rank}`;
+        const successes = candidate.successes_before === null ? "" : ` · 處理時成功 ${candidate.successes_before} 題`;
+        const item = element("li", `第 ${candidate.group} 組 · ${outcome}${position}${successes}`);
+        item.dataset.submission = candidate.id;
+        appendAnswers(item, candidate.answers);
         if (state.role === "teacher" && !round.finalized && state.phase === "RESULTS" && round.id === state.round.id) {
-          item.append(button(candidate.rejected ? "撤銷判錯" : "判錯", `rounds/${round.id}/reviews/${candidate.id}`, {
-            method: "PATCH", body: { rejected: !candidate.rejected, expected_review_version: round.review_version },
-          }));
+          const path = `rounds/${round.id}/reviews/${candidate.id}`;
+          const options = status => ({method: "PATCH", body: {review_status: status, expected_review_version: round.review_version}});
+          if (candidate.id === result.current_submission_id) {
+            item.append(button("確認正確", path, options("CORRECT")), button("判錯", path, options("INCORRECT")));
+          } else if (candidate.review_status !== "UNREVIEWED") {
+            const affected = round.results.slice(round.results.indexOf(result)).map(r => r.question).join("、");
+            item.append(button("撤銷審閱", path, {...options("UNREVIEWED"),
+              confirmation: `撤銷後，第 ${affected} 題須從受影響處重新審閱，原暫定勝者可能失效。確定撤銷？`}));
+          }
         }
         candidates.append(item);
       }
@@ -186,22 +202,34 @@ function resultsPanel(state) {
   return section;
 }
 
+function appendAnswers(parent, answers) {
+  answers.forEach((answer, index) => {
+    parent.append(element("p", `空格 ${index + 1}`));
+    const text = element("div", answer);
+    text.className = "answer-text";
+    parent.append(text);
+  });
+}
+
 function submissionPanel(state) {
   const section = element("section");
   section.id = "submissions";
-  section.append(element("h2", state.role === "teacher" ? "即時提交（順位暫估、未定案）" : "本組作答"));
+  section.append(element("h2", state.role === "teacher" ? "即時提交（依後端接收先後）" : "本組作答"));
   const round = state.round;
   for (const q of round.question_details) {
     const block = element("div");
     block.append(element("h3", `第 ${q.number} 題`));
     const sent = round.submissions.filter(s => s.question_id === q.id);
-    for (const s of sent) block.append(element("p", `第 ${s.group} 組 · 本組已送出：${s.answers.join(' ／ ')}`));
+    sent.forEach((s, index) => {
+      const row = element("div");
+      row.append(element("p", `第 ${s.group} 組 · ${state.role === "teacher" ? `提交先後 ${index + 1}` : "本組已送出"}`));
+      appendAnswers(row, s.answers);
+      block.append(row);
+    });
     if (state.role === "teacher") {
       for (const group of state.groups.filter(g => !sent.some(s => s.group === g.number))) {
         block.append(element("p", `第 ${group.number} 組 · 未送出`));
       }
-      const result = round.results.find(r => r.question === q.number);
-      for (const c of result?.candidates ?? []) block.append(element("p", `暫估順位 ${c.rank}：第 ${c.group} 組`));
     } else if (!sent.length) {
       const form = element("form");
       form.dataset.question = q.id;
@@ -210,8 +238,14 @@ function submissionPanel(state) {
         const input = element("textarea");
         input.name = "answer";
         input.required = true;
+        const count = element("small", "0 / 500 字（空白與換行也計入）");
+        input.addEventListener("input", () => {
+          const length = Array.from(input.value).length;
+          count.textContent = `${length} / 500 字（空白與換行也計入）`;
+          input.setCustomValidity(length > 500 ? "每格最多 500 字。" : "");
+        });
         wrapper.append(input);
-        form.append(wrapper);
+        form.append(wrapper, count);
       }
       const submit = element("button", `送出第 ${q.number} 題`);
       submit.type = "submit";
@@ -256,7 +290,8 @@ function renderPanels(state) {
     if (phase === "OPEN") controls.append(button("關輪", `rounds/${round.id}/close`));
     if (phase === "RESULTS") {
       if (round.finalized) controls.append(button("結束活動", "finish"));
-      else controls.append(button("確認定案", `rounds/${round.id}/finalize`, { body: { expected_review_version: round.review_version } }));
+      else if (round.review_complete) controls.append(button("確認定案", `rounds/${round.id}/finalize`, { body: { expected_review_version: round.review_version } }));
+      else controls.append(element("p", "請完成逐題審閱後再定案。"));
     }
   } else if (["PREPARING", "RESULTS"].includes(phase)) {
     controls.append(button("離開組別", "leave", { leave: true }));

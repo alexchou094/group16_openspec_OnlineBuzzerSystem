@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Callable
 
 from app.domain.activity import (
-    TERMINAL_PHASES, Activity, Group, Phase, Question, Round, SourceSnapshot,
+    TERMINAL_PHASES, Activity, Group, Phase, Question, Round, SourceSnapshot, ReviewStatus,
 )
 from app.repositories.memory import MemoryRepository, new_id
 from app.domain.ranking import fixed_order, rank
@@ -170,16 +170,20 @@ class ActivityService:
             question = next((q for q in activity.questions if q.id == question_id), None)
             if question_id not in round_.question_ids or question is None:
                 raise ActivityError(422, "此題不在本輪開放範圍。")
-            if (not isinstance(answers, (list, tuple)) or len(answers) != len(question.blanks)
-                    or any(not isinstance(a, str) or not a.strip() for a in answers)):
+            if not isinstance(answers, (list, tuple)) or len(answers) != len(question.blanks):
                 raise ActivityError(422, "請一次填妥此題全部子空格，不得空白、缺格或多格。")
+            for index, answer in enumerate(answers, 1):
+                if not isinstance(answer, str) or not answer.strip():
+                    raise ActivityError(422, f"第 {index} 格未作答，請填入非空白文字。")
+                if len(answer) > 500:
+                    raise ActivityError(422, f"第 {index} 格超過 500 字上限（空白與換行也計入）。")
             group = activity.groups[activity.memberships[session]]
             duplicate = (question_id, group.id) in round_.submissions
             submission = round_.record_accepted(new_id(), question_id, group.id, tuple(answers), now)
             return {"already_submitted": duplicate, "message": "本組已送出" if duplicate else "提交成功",
                     "submission": self._submission_data(submission, activity)}
 
-    def review(self, activity_id, session, round_id, submission_id, rejected, expected_review_version):
+    def review(self, activity_id, session, round_id, submission_id, review_status, expected_review_version):
         with self.locked(activity_id, session, "teacher") as entry:
             activity = entry.activity
             round_ = self._match_round(activity, round_id)
@@ -187,25 +191,41 @@ class ActivityService:
                 raise ActivityError(409, "僅能修改本輪尚未定案的結果。")
             if expected_review_version != round_.review_version:
                 raise ActivityError(409, "結果版本已更新，請重新檢視。")
-            if type(rejected) is not bool:
-                raise ActivityError(422, "判錯狀態須為布林值。")
+            try:
+                status = ReviewStatus(review_status)
+            except (ValueError, TypeError):
+                raise ActivityError(422, "請選擇正確、判錯或撤銷審閱。") from None
             key = next((k for k, s in round_.submissions.items() if s.id == submission_id), None)
             if key is None:
                 raise ActivityError(404, "提交不存在。")
             original = round_.submissions[key]
-            if original.rejected != rejected:
-                round_.submissions[key] = replace(original, rejected=rejected)
-                results, counts = rank(round_, round_.fixed_question_order)
-                round_.affected_questions = tuple(new.question_id for old, new in zip(round_.results, results) if old != new)
-                round_.results, round_.cumulative_counts = results, counts
-                round_.review_version += 1
+            if status == ReviewStatus.UNREVIEWED:
+                if original.review_status == ReviewStatus.UNREVIEWED:
+                    raise ActivityError(409, "此提交尚未審閱，無法撤銷。")
+                result = next(r for r in round_.results if r.question_id == original.question_id)
+                ids = [c.submission_id for c in result.candidates]
+                reset_ids = set(ids[ids.index(submission_id):])
+                order = round_.fixed_question_order
+                later_questions = set(order[order.index(original.question_id) + 1:])
+                for item_key, sub in list(round_.submissions.items()):
+                    if sub.id in reset_ids or sub.question_id in later_questions:
+                        round_.submissions[item_key] = replace(sub, review_status=ReviewStatus.UNREVIEWED)
+            else:
+                current_ids = {r.current_submission_id for r in round_.results if r.current_submission_id}
+                if submission_id not in current_ids:
+                    raise ActivityError(409, "請依固定題序審閱當前候選；已有正確答案後不可繼續判定。")
+                round_.submissions[key] = replace(original, review_status=status)
+            results, counts = rank(round_, round_.fixed_question_order)
+            round_.affected_questions = tuple(new.question_id for old, new in zip(round_.results, results) if old != new)
+            round_.results, round_.cumulative_counts = results, counts
+            round_.review_version += 1
             return round_.review_version
 
     def _submission_data(self, submission, activity):
         return {"id": submission.id, "question_id": submission.question_id,
                 "group": next(g.number for g in activity.groups.values() if g.id == submission.group_id),
                 "answers": list(submission.answers), "received_at": self.timestamp(submission.received_at),
-                "rejected": submission.rejected}
+                "rejected": submission.rejected, "review_status": submission.review_status}
 
     def finalize(self, activity_id: str, session: str, round_id: str, expected_review_version: int) -> None:
         with self.locked(activity_id, session, "teacher") as entry:
@@ -217,6 +237,8 @@ class ActivityService:
                 return
             if activity.phase != Phase.RESULTS:
                 raise ActivityError(409, "請先關輪並檢視結果。")
+            if any(result.status != "COMPLETE" for result in round_.results):
+                raise ActivityError(409, "請先完成每題審閱，再確認定案。")
             round_.finalized = True
             activity.finalized_revision += 1
 
@@ -256,7 +278,7 @@ class ActivityService:
 
             def round_data(round_: Round) -> dict:
                 public = round_.review_version > 0
-                results = round_.results if public else rank(round_, fixed_order(round_, activity.questions))[0] if teacher else ()
+                results = round_.results if public else ()
                 submissions = {s.id: s for s in round_.submissions.values()}
                 return {
                     "id": round_.id, "number": round_.number,
@@ -270,7 +292,9 @@ class ActivityService:
                     "cumulative_counts": [{"group": groups[g], "successes": n} for g, n in round_.cumulative_counts if g in groups],
                     "deadline": None if round_.deadline is None else self.timestamp(round_.deadline),
                     "review_version": round_.review_version, "finalized": round_.finalized,
+                    "review_complete": public and all(r.status == "COMPLETE" for r in results),
                     "results": [{"question": questions[result.question_id].number,
+                                 "status": result.status, "current_submission_id": result.current_submission_id,
                                  "winner": groups.get(result.winner_group_id), "reason": result.reason,
                                  "candidates": [{**self._submission_data(submissions[c.submission_id], activity),
                                                  "rank": c.rank, "successes_before": c.successes_before}

@@ -1,5 +1,7 @@
 # Verification Report: build-online-buzzer-system（第 4、5 組）
 
+> 此為改版前的歷史報告，不代表目前三態審閱規格的完成情形。新版驗證請見 [round-review-v2-verification.md](round-review-v2-verification.md)。
+
 使用 openspec-verify-change，讀取 status、apply context、proposal、design、tasks 與五份 delta specs，並比對實作及測試。以下區分本次範圍與完整 change；不執行 archive。
 
 ## Summary

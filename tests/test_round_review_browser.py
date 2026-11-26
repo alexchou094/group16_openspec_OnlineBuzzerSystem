@@ -15,6 +15,19 @@ from app.services.activities import ActivityService
 pytestmark = pytest.mark.skipif(os.getenv('BUZZER_BROWSER_TEST') != '1', reason='需啟用瀏覽器測試')
 
 
+def decide(page, label='確認正確'):
+    control = page.get_by_role('button', name=label, exact=True)
+    submission = control.locator('..').get_attribute('data-submission')
+    control.click()
+    expect(page.locator(f'[data-submission="{submission}"]').get_by_role('button', name=label, exact=True)).to_have_count(0)
+
+
+def undo_first(page):
+    page.once('dialog', lambda dialog: dialog.accept())
+    page.get_by_role('button', name='撤銷審閱').first.click()
+    expect(page.get_by_role('button', name='確認正確', exact=True)).to_have_count(1)
+
+
 @pytest.fixture
 def server():
     service = ActivityService(MemoryRepository())
@@ -69,6 +82,7 @@ def test_four_contexts_review_recovery_and_isolation(server, tmp_path):
         for page in (first, second, device):
             expect(page.locator('#phase')).to_have_text('搶答中', timeout=2000)
         expect(first.locator('#timer')).to_contain_text('由老師結束')
+        expect(first.locator('#identity')).to_contain_text('成功 0 題')
         old_state = first.request.get(first.url + '/state').json()
         # 同組雙裝置啟動請求，服務鎖決定唯一有效答案。
         for page in (first, device):
@@ -88,6 +102,9 @@ def test_four_contexts_review_recovery_and_isolation(server, tmp_path):
         first.get_by_label('第 2 題・空格 1').fill('甲二')
         first.get_by_role('button', name='送出第 2 題').click()
         expect(teacher.locator('#submissions')).to_contain_text('甲二', timeout=2000)
+        expect(teacher.locator('#submissions')).to_contain_text('提交先後 1')
+        assert '暫估' not in teacher.locator('#submissions').inner_text()
+        assert teacher.request.get(teacher.url + '/state').json()['round']['results'] == []
         assert '甲二' not in second.request.get(second.url + '/state').text()
         assert '甲二' not in second.locator('#submissions').inner_text()
         for label, answer in [('第 1 題・空格 1', '乙一'), ('第 1 題・空格 2', '乙子格')]:
@@ -134,6 +151,11 @@ def test_four_contexts_review_recovery_and_isolation(server, tmp_path):
         first.evaluate('() => window.delayed')
         expect(first.locator('#phase')).to_have_text('本輪結果')
         first.unroute('**/state', delay_old)
+        expect(first.get_by_text('第 1 題 · 待審閱', exact=False)).to_be_visible()
+        expect(first.get_by_text('第 2 題 · 等待前題審閱', exact=False)).to_be_visible()
+        assert teacher.get_by_role('button', name='確認定案').count() == 0
+        decide(teacher)
+        decide(teacher)
         expect(first.get_by_text('第 1 題 · 第 1 組勝出', exact=False)).to_be_visible()
         expect(first.get_by_text('第 2 題 · 第 2 組勝出', exact=False)).to_be_visible()
         assert teacher.locator('#panels img').count() == 0
@@ -147,21 +169,31 @@ def test_four_contexts_review_recovery_and_isolation(server, tmp_path):
             pass
         expect(first.locator('#phase')).to_have_text('本輪結果')
         first.unroute('**/state')
-        teacher.get_by_role('button', name='判錯', exact=True).first.click()
+        undo_first(teacher)
+        for page in (teacher, first, second):
+            expect(page.get_by_text('第 2 題 · 等待前題審閱', exact=False)).to_be_visible(timeout=2000)
+            expect(page.get_by_text('結果更新：第 1、2 題')).to_be_visible()
+        decide(teacher, '判錯')
+        decide(teacher)
+        expect(first.get_by_text('第 2 題 · 待審閱', exact=False)).to_be_visible(timeout=2000)
+        decide(teacher)
         for page in (teacher, first, second):
             expect(page.get_by_text('第 1 題 · 第 2 組勝出', exact=False)).to_be_visible(timeout=2000)
             expect(page.get_by_text('第 2 題 · 第 1 組勝出', exact=False)).to_be_visible(timeout=2000)
-            expect(page.get_by_text('結果更新：第 1、2 題')).to_be_visible()
-        teacher.get_by_role('button', name='撤銷判錯').click()
+        undo_first(teacher)
+        decide(teacher)
+        decide(teacher)
         expect(first.get_by_text('第 2 題 · 第 2 組勝出', exact=False)).to_be_visible(timeout=2000)
         # 題一兩候選都判錯，定案後只可重開題一及無人回答的題三。
-        teacher.get_by_role('button', name='判錯', exact=True).first.click()
-        teacher.get_by_role('button', name='判錯', exact=True).first.click()
+        undo_first(teacher)
+        decide(teacher, '判錯')
+        decide(teacher, '判錯')
+        decide(teacher)
         expect(first.get_by_text('第 1 題 · 未成功', exact=False)).to_be_visible(timeout=2000)
         teacher.get_by_role('button', name='確認定案').click()
         expect(teacher.get_by_label('第 1 題', exact=True)).to_be_visible()
         assert teacher.get_by_label('第 2 題', exact=True).count() == 0
-        assert teacher.get_by_role('button', name='撤銷判錯').count() == 0
+        assert teacher.get_by_role('button', name='撤銷審閱').count() == 0
         teacher.get_by_role('button', name='開輪', exact=True).click()
         expect(first.get_by_role('button', name='送出第 1 題')).to_be_visible(timeout=2000)
         assert second.request.get(second.url + '/state').json()['round']['submissions'] == []
@@ -203,7 +235,83 @@ def test_browser_speed_fair_difference(server, fair, winners):
                 page.get_by_role('button', name=f'送出第 {q} 題').click()
                 expect(page.get_by_role('button', name=f'送出第 {q} 題')).to_have_count(0)
         teacher.get_by_role('button', name='關輪', exact=True).click()
+        decide(teacher)
+        decide(teacher)
         for page in pages:
             for q, winner in enumerate(winners, 1):
                 expect(page.get_by_text(f'第 {q} 題 · 第 {winner} 組勝出', exact=False)).to_be_visible(timeout=2000)
+        browser.close()
+
+
+def test_unicode_original_text_and_four_group_review(server):
+    url, service = server
+    with sync_playwright() as p:
+        browser = p.chromium.launch(channel=os.getenv('BUZZER_BROWSER_CHANNEL') or None)
+        pages = [browser.new_context().new_page() for _ in range(5)]
+        teacher, *students = pages
+        teacher.goto(url)
+        teacher.get_by_label('組數上限').fill('4')
+        teacher.get_by_role('button', name='建立活動').click()
+        expect(teacher.locator('#phase')).to_have_text('準備中')
+        a = service.repository.get(teacher.url.rsplit('/', 1)[1]).activity
+        service.replace_questions(a.id, a.owner, SourceSnapshot('fixture', 1, '原文', 'shape'), (
+            Question('q1', 1, (Blank('1', 'G5'),)),))
+        for number, page in enumerate(students, 1):
+            page.goto(url)
+            page.get_by_label('活動代碼').fill(a.code)
+            page.get_by_label('組號', exact=True).fill(str(number))
+            page.get_by_role('button', name='加入活動').click()
+            expect(page.locator('#identity')).to_contain_text(f'第 {number} 組')
+        teacher.get_by_role('button', name='開輪', exact=True).click()
+        original = ' \n' + '😀' * 496 + '\n '
+        for number, page in enumerate(students, 1):
+            textarea = page.get_by_label('第 1 題・空格 1')
+            if number == 1:
+                textarea.fill(original + 'a')
+                expect(page.get_by_text('501 / 500 字（空白與換行也計入）')).to_be_visible()
+                assert textarea.evaluate('el => el.validity.customError')
+                page.get_by_role('button', name='送出第 1 題').click()
+                assert not a.current_round.submissions
+                textarea.fill(original)
+                expect(page.get_by_text('500 / 500 字（空白與換行也計入）')).to_be_visible()
+                assert not textarea.evaluate('el => el.validity.customError')
+            else:
+                textarea.fill(f'第{number}組答案')
+            page.get_by_role('button', name='送出第 1 題').click()
+            expect(page.get_by_role('button', name='送出第 1 題')).to_have_count(0)
+        expect(teacher.locator('#submissions .answer-text')).to_have_count(4, timeout=2000)
+        answer_node = teacher.locator('#submissions .answer-text').first
+        assert answer_node.text_content() == original
+        assert answer_node.evaluate('el => getComputedStyle(el).whiteSpace') == 'pre-wrap'
+        teacher.get_by_role('button', name='關輪', exact=True).click()
+        decide(teacher, '判錯')
+        decide(teacher, '判錯')
+        decide(teacher)
+        tail_id = a.current_round.submissions['q1', a.groups[4].id].id
+        for page in pages:
+            expect(page.get_by_text('第 1 題 · 第 3 組勝出', exact=False)).to_be_visible(timeout=2000)
+            tail = page.locator(f'[data-submission="{tail_id}"]')
+            expect(tail).to_contain_text('搶答失敗')
+            assert '判錯' not in tail.inner_text() and '正確' not in tail.inner_text()
+            assert tail.get_by_role('button').count() == 0
+        assert a.current_round.submissions['q1', a.groups[4].id].review_status == 'UNREVIEWED'
+        # 撤銷前提示範圍，取消不變更結果；確認後回到第一候選。
+        messages = []
+        def cancel_dialog(dialog):
+            messages.append(dialog.message)
+            dialog.dismiss()
+        teacher.once('dialog', cancel_dialog)
+        teacher.get_by_role('button', name='撤銷審閱').first.click()
+        assert '第 1 題' in messages[0] and '重新審閱' in messages[0]
+        assert a.current_round.results[0].winner_group_id == a.groups[3].id
+        undo_first(teacher)
+        for page in students:
+            expect(page.get_by_text('第 1 題 · 待審閱', exact=False)).to_be_visible(timeout=2000)
+        decide(teacher)
+        teacher.get_by_role('button', name='確認定案').click()
+        for page in pages:
+            expect(page.get_by_text('第 1 輪 · 已定案', exact=True)).to_be_visible(timeout=2000)
+        expect(students[0].locator('#identity')).to_contain_text('成功 1 題')
+        assert teacher.get_by_role('button', name='撤銷審閱').count() == 0
+        assert a.current_round.submissions['q1', a.groups[1].id].answers == (original,)
         browser.close()

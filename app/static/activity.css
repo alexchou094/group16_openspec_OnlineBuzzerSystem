@@ -20,6 +20,7 @@ textarea { display: block; box-sizing: border-box; width: 100%; min-height: 5rem
 #submissions > div { border-top: 1px solid #ccddd6; margin-top: 1rem; }
 #panels { display: grid; gap: 1rem; }
 #panels li { white-space: pre-wrap; overflow-wrap: anywhere; }
+.answer-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: .5rem; background: #f1f6f3; border-radius: .3rem; }
 input:not([type="checkbox"]), select { display: block; box-sizing: border-box; width: 100%; padding: .55rem; border: 1px solid #6a8178; border-radius: .35rem; }
 button { width: fit-content; margin: .25rem .4rem .25rem 0; border: 1px solid #175e4c; border-radius: .4rem; padding: .55rem .85rem; background: #175e4c; color: white; cursor: pointer; }
 button:disabled { opacity: .55; cursor: wait; }
