@@ -162,6 +162,8 @@ CANCELLED             FINISHED
 
 OAuth client secret 從環境指定的私有檔案載入，client id／Picker developer key 屬瀏覽器設定，須限制允許來源及啟用 API；提供給 repo 的只能是空值設定範例。OAuth callback 檢查 state，測試帳號、redirect URI、授權拒絕與逾期皆納入驗證。實作前以使用者指定的測試複本完成選檔、讀取 merge metadata、文字寫回與權限錯誤驗證，禁止用真實課堂原件做破壞性試驗。
 
+第 1 節的驗證工具以獨立的 loopback 應用啟動，使用短效 Google access token。只接受 Picker 選到的指定測試複本。驗證頁讀取固定測試分頁的值與合併範圍，寫入前確認該分頁含測試標記且指定驗證格為空或已含同一測試值，再用 RAW 寫入並以未格式化值讀回。存取過期時要求重新授權。此固定驗證版型用於確認 API 能力，正式匯入與寫回仍依動態映射規格實作。
+
 技術依據（2026-11-17 查閱，未實際連接使用者帳號）：
 - [Google Sheets 權限範圍](https://developers.google.com/workspace/sheets/api/scopes)：`drive.file` 限制至應用使用的檔案。
 - [Web Picker 整合](https://developers.google.com/workspace/drive/picker/guides/web-picker)：PickerBuilder 需要 OAuth token、developer key 與 callback。

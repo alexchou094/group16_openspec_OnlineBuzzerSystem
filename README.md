@@ -14,6 +14,8 @@ python -m venv .venv
 
 開啟 `http://127.0.0.1:8000`。活動和瀏覽器工作階段保存在單一伺服器程序的記憶體。重啟會清空活動，舊活動頁會顯示失效。請使用單 worker，並用不同瀏覽器設定檔或獨立瀏覽器 context 模擬老師、第一組和第二組。同一設定檔的多個分頁會共用身分。伺服器持續運作時，使用保留網站 Cookie 的同一設定檔重開瀏覽器，開啟原活動網址即可恢復老師或學生身分。
 
+一般活動示範不需要 Google 憑證。環境變數欄位見 [.env.example](.env.example)，請在啟動服務的 PowerShell 視窗設定。Google OAuth Web 用戶端 JSON 放在專案外的私有目錄，或專案內已忽略的 `credentials/`。Google Cloud 設定、驗證工具啟動與人工測試見 [第 1 節人工測試](openspec/changes/build-online-buzzer-system/part1-manual-tests.md)。
+
 ## 示範輪次
 
 啟動前在同一個 PowerShell 視窗設定 `$env:BUZZER_DEMO = '1'`，即可在老師看板載入三道示範題。示範題只供驗證活動流程。後續學習單模組可呼叫 `ActivityService.replace_questions`，將已驗證的來源和題目映射交給活動服務。
