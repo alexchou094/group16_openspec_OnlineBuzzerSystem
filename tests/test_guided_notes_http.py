@@ -74,7 +74,7 @@ def test_google_adapter_reads_sparse_values_and_merges_by_sheet_id(monkeypatch):
         assert options["json"] == {"dataFilters": [{"gridRange": {"sheetId": 0}}]}
         assert options["params"]["fields"] == (
             "sheets(properties(sheetId,title,gridProperties(columnCount)),merges,"
-            "data(startRow,startColumn,rowData(values(effectiveValue))))"
+            "data(startRow,startColumn,rowData(values(effectiveValue,userEnteredValue))))"
         )
         return reply({"sheets": [{
             "properties": {"sheetId": 0, "title": "重新命名", "gridProperties": {"columnCount": 8}},

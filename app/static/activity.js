@@ -274,6 +274,13 @@ function renderPanels(state) {
   const controls = element("section");
   controls.append(element("h2", teacher ? "活動操作" : "組別操作"));
   if (teacher) {
+    if (phase !== "CANCELLED") {
+      const exportLink = element("a", "匯出定案成果");
+      exportLink.href = actionUrl("exports");
+      const exportRow = element("p");
+      exportRow.append(exportLink);
+      controls.append(exportRow);
+    }
     if (phase === "PREPARING") {
       const importLink = element("a", state.import_summary ? "重新匯入學習單" : "匯入學習單");
       importLink.href = actionUrl("import");

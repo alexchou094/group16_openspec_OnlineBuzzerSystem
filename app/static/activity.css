@@ -38,4 +38,9 @@ li { margin-block: .3rem; }
 #import-error { color: #8a2620; }
 .import-page .secondary { color: #175e4c; background: white; }
 .import-questions { padding-left: 1.5rem; }
+.export-table { overflow-x: auto; margin-block: 1rem; }
+.export-table table { width: 100%; border-collapse: collapse; }
+.export-table th, .export-table td { padding: .5rem; text-align: left; vertical-align: top; border-bottom: 1px solid #ccddd6; }
+.export-table td:last-child { width: 55%; }
+#export-error { color: #8a2620; }
 [hidden] { display: none !important; }

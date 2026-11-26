@@ -1,6 +1,6 @@
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 
 from app.domain.activity import Blank, Question, SourceSnapshot
@@ -18,6 +18,14 @@ def address(row: int, column: int) -> str:
         column, digit = divmod(column - 1, 26)
         letters = chr(65 + digit) + letters
     return f"{letters}{row + 1}"
+
+
+def coordinates(target: str) -> tuple[int, int]:
+    letters, row = re.fullmatch(r"([A-Z]+)([1-9][0-9]*)", target).groups()
+    column = 0
+    for letter in letters:
+        column = column * 26 + ord(letter) - ord("A") + 1
+    return int(row) - 1, column - 1
 
 
 @dataclass(frozen=True, order=True)
@@ -43,11 +51,27 @@ class SheetSnapshot:
     values: tuple[tuple[Cell, ...], ...]
     merges: tuple[MergeRange, ...] = ()
     column_count: int | None = None
+    literal_text: frozenset[tuple[str, str]] | None = None
 
     def value(self, row: int, column: int) -> Cell:
         if row < len(self.values) and column < len(self.values[row]):
             return self.values[row][column]
         return None
+
+    def has_raw_answer(self, target: str, answer: str) -> bool:
+        if self.literal_text is not None:
+            return (target, answer) in self.literal_text
+        return self.value(*coordinates(target)) == answer
+
+    def without_known_answers(self, answers: tuple[tuple[str, str], ...]) -> "SheetSnapshot":
+        # 已核對的答案原文可能剛好長得像表頭或子編號。
+        rows = list(self.values)
+        for target, answer in answers:
+            if self.has_raw_answer(target, answer):
+                row, column = coordinates(target)
+                if self.value(row, column) == answer:
+                    rows[row] = rows[row][:column] + (None,) + rows[row][column + 1:]
+        return replace(self, values=tuple(rows))
 
 
 class WorksheetError(ValueError):
