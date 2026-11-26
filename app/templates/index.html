@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>課堂搶答系統</title>
+  <link rel="stylesheet" href="/static/activity.css">
+  <script type="module" src="/static/activity.js?v={{ activity_script_version }}"></script>
+</head>
+<body data-activity="{{ activity_id }}" data-demo="{{ 'yes' if demo else 'no' }}">
+  <header><a href="/">課堂搶答系統</a></header>
+  <main>
+    <p id="notice" role="alert" hidden></p>
+    {% if not activity_id %}
+    <h1>課堂活動</h1>
+    <div class="columns">
+      <section>
+        <h2>老師建立活動</h2>
+        <a id="resume" hidden>回到進行中的活動</a>
+        <form id="create" method="post">
+          <label>組數上限 <input name="limit" type="number" min="1" step="1" required></label>
+          <button type="submit" disabled>建立活動</button>
+        </form>
+      </section>
+      <section>
+        <h2>學生加入活動</h2>
+        <div id="student-resume" hidden></div>
+        <form id="join" method="post">
+          <label>活動代碼 <input name="code" required autocomplete="off"></label>
+          <label>組號 <input name="number" type="number" min="1" step="1" required></label>
+          <label>加入憑證（既有組別需填）
+            <input name="credential" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off">
+          </label>
+          <button type="submit" disabled>加入活動</button>
+        </form>
+      </section>
+    </div>
+    {% else %}
+    <h1 id="title">活動</h1>
+    <p id="connection" role="status">正在同步…</p>
+    <div id="activity" hidden>
+      <div class="overview">
+        <p id="phase" aria-live="polite"></p>
+        <p id="identity"></p>
+        <p id="round"></p>
+        <p id="timer"></p>
+      </div>
+      <div id="panels" class="columns"></div>
+    </div>
+    <a href="/">返回首頁</a>
+    {% endif %}
+  </main>
+</body>
+</html>
