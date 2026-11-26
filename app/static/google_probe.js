@@ -1,3 +1,5 @@
+import { chooseSpreadsheet } from "./google_picker.js";
+
 const csrf = document.querySelector('meta[name="csrf-token"]').content;
 const statusText = document.querySelector("#status");
 const resultText = document.querySelector("#result");
@@ -14,6 +16,7 @@ async function post(path, data) {
     const result = await response.json();
     if (!response.ok) {
         if (response.status === 401) {
+            pickButton.dataset.expired = "true";
             pickButton.disabled = true;
             readButton.disabled = true;
             writeButton.disabled = true;
@@ -43,44 +46,23 @@ document.querySelector("#authorize").onclick = () => show(async () => {
 });
 
 pickButton.onclick = () => show(async () => {
-    if (!window.gapi) throw new Error("無法載入 Google Picker。");
-    await new Promise((resolve, reject) => {
-        gapi.load("picker", {
-            callback: resolve,
-            onerror: () => reject(new Error("無法載入 Google Picker。")),
-            timeout: 15000,
-            ontimeout: () => reject(new Error("載入 Google Picker 逾時。")),
-        });
-    });
-    const {token, key, project} = await post("/picker");
-    const api = google.picker;
-    let picker = new api.PickerBuilder()
-        .addView(api.ViewId.SPREADSHEETS)
-        .setSelectableMimeTypes("application/vnd.google-apps.spreadsheet")
-        .setOAuthToken(token)
-        .setDeveloperKey(key)
-        .setAppId(project)
-        .setOrigin(location.origin)
-        .setCallback(data => {
-            if (![api.Action.PICKED, api.Action.CANCEL].includes(data.action)) return;
-            picker.dispose();
-            picker = null;
-            if (data.action === api.Action.CANCEL) {
-                statusText.textContent = "已取消選檔。";
-                return;
-            }
-            readButton.disabled = true;
-            writeButton.disabled = true;
-            void show(async () => {
-                const result = await post("/select", {spreadsheet_id: data.docs[0].id});
-                readButton.disabled = false;
-                writeButton.disabled = false;
-                return result;
-            });
-        })
-        .build();
+    pickButton.disabled = true;
     statusText.textContent = "請在 Google Picker 選取測試複本。";
-    picker.setVisible(true);
+    try {
+        const spreadsheetId = await chooseSpreadsheet(() => post("/picker"));
+        if (spreadsheetId === null) {
+            statusText.textContent = "已取消選檔。";
+            return;
+        }
+        readButton.disabled = true;
+        writeButton.disabled = true;
+        const result = await post("/select", {spreadsheet_id: spreadsheetId});
+        readButton.disabled = false;
+        writeButton.disabled = false;
+        return result;
+    } finally {
+        if (!pickButton.dataset.expired) pickButton.disabled = false;
+    }
 });
 
 readButton.onclick = () => show(() => post("/read"));

@@ -11,20 +11,18 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from google_auth_oauthlib.flow import Flow
-from oauthlib.oauth2 import OAuth2Error
 from pydantic import BaseModel
-from requests import RequestException
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.adapters.google_probe import GoogleSheetsProbe, ProbeError, SCOPE
+from app.adapters.google_probe import GoogleSheetsProbe, ProbeError
+from app.web.google_oauth import OAUTH_WINDOW, exchange_code, start_flow
 
 
 ROOT = Path(__file__).resolve().parents[1]
 ORIGIN = "http://127.0.0.1:8001"
 CALLBACK = ORIGIN + "/oauth/callback"
 COOKIE = "buzzer_google_probe"
-OAUTH_WINDOW = 600
 
 
 @dataclass(frozen=True)
@@ -128,13 +126,7 @@ def create_app(settings: Config | None = None) -> FastAPI:
     async def start(request: Request):
         session = authorized(request)
         try:
-            flow = Flow.from_client_secrets_file(
-                config().client_file, scopes=[SCOPE], redirect_uri=CALLBACK,
-                autogenerate_code_verifier=True,
-            )
-            if flow.client_type != "web":
-                raise ValueError("web client required")
-            url, state = flow.authorization_url(access_type="online", prompt="consent")
+            flow, url, state = start_flow(config().client_file, CALLBACK)
         except (OSError, ValueError):
             raise ProbeError(503, "無法載入 Google OAuth Web 用戶端設定。") from None
         session.oauth_state = state
@@ -162,17 +154,9 @@ def create_app(settings: Config | None = None) -> FastAPI:
         elif not code or "error" in request.query_params:
             session.message = "Google 授權未完成，請重新授權。"
         else:
-            authorization = None
-            try:
-                await run_in_threadpool(flow.fetch_token, code=code, timeout=15)
-                credentials = flow.credentials
-                if not credentials.token or credentials.expiry is None:
-                    raise ValueError("missing token or expiry")
-            except (OAuth2Error, RequestException, ValueError, Warning):
-                message = "Google 授權交換失敗，請重新授權並確認設定。"
-            else:
-                authorization = (credentials.token, credentials.expiry)
-                message = "Google 授權成功，請選擇測試複本。"
+            authorization = await run_in_threadpool(exchange_code, flow, code)
+            message = ("Google 授權成功，請選擇測試複本。" if authorization
+                       else "Google 授權交換失敗，請重新授權並確認設定。")
             if session.oauth_state == state:
                 session.authorization = authorization
                 session.message = message
