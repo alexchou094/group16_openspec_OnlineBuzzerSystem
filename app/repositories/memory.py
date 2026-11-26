@@ -14,6 +14,7 @@ def new_id() -> str:
 class Session:
     id: str
     csrf: str
+    student_id: str
 
 
 @dataclass
@@ -32,14 +33,22 @@ class MemoryRepository:
         self._codes: dict[str, str] = {}
         self._active: dict[str, str] = {}
         self._sessions: dict[str, Session] = {}
+        self._student_ids: set[str] = set()
 
     def session(self, session_id: str | None) -> Session | None:
         with self._lock:
             return self._sessions.get(session_id) if session_id else None
 
-    def new_session(self) -> Session:
+    def student_id(self, recovery_cookie: str | None) -> str | None:
         with self._lock:
-            session = Session(new_id(), new_id())
+            return recovery_cookie if recovery_cookie in self._student_ids else None
+
+    def new_session(self, student_id: str | None = None) -> Session:
+        with self._lock:
+            if student_id is None:
+                student_id = f"student-{new_id()}"
+                self._student_ids.add(student_id)
+            session = Session(new_id(), new_id(), student_id)
             self._sessions[session.id] = session
             return session
 

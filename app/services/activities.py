@@ -29,13 +29,18 @@ class ActivityService:
         return datetime.fromtimestamp(self.utc_offset + monotonic, UTC).isoformat(timespec=timespec)
 
     @contextmanager
-    def locked(self, activity_id: str, session_id: str, role: str | None = None):
+    def locked(self, activity_id: str, session_id: str, role: str | None = None,
+               *, student_id: str | None = None):
         entry = self.repository.get(activity_id)
         if entry is None:
             raise ActivityError(404, "活動已失效或不存在。")
         with entry.lock:
             activity = entry.activity
-            actual = "teacher" if activity.owner == session_id else "student" if session_id in activity.memberships else None
+            actual = None
+            if activity.owner == session_id:
+                actual = "teacher"
+            elif (student_id or session_id) in activity.memberships:
+                actual = "student"
             if actual is None or (role is not None and actual != role):
                 raise ActivityError(403, "沒有此活動的操作權限，請確認身分或重新加入。")
             self._expire(activity)
@@ -58,7 +63,9 @@ class ActivityService:
                     activities.append({"id": activity.id, "code": activity.code})
         return activities
 
-    def join(self, session: str, code: str, number: int, credential: str | None) -> str:
+    def join(self, session: str, code: str, number: int, credential: str | None,
+             *, student_id: str | None = None) -> str:
+        member = student_id or session
         activity_id = self.repository.activity_id_for_code(code.strip().upper())
         if activity_id is None:
             raise ActivityError(404, "活動代碼無效或已失效。")
@@ -72,7 +79,7 @@ class ActivityService:
                 raise ActivityError(409, "請用獨立的瀏覽器環境加入學生組別。")
             if type(number) is not int or not 1 <= number <= activity.group_limit:
                 raise ActivityError(422, f"組號須為 1 到 {activity.group_limit} 的整數。")
-            current = activity.memberships.get(session)
+            current = activity.memberships.get(member)
             if current == number:
                 return activity.id
             if current is not None:
@@ -92,7 +99,7 @@ class ActivityService:
             elif (group is None or not credential or not credential.isascii()
                   or not secrets.compare_digest(group.credential, credential)):
                 raise ActivityError(403, "加入憑證錯誤或已失效。")
-            activity.memberships[session] = number
+            activity.memberships[member] = number
             return activity.id
 
     def leave(self, activity_id: str, session: str) -> None:
@@ -262,11 +269,11 @@ class ActivityService:
             with entry.lock:
                 self._expire(entry.activity)
 
-    def state(self, activity_id: str, session: str) -> dict:
-        with self.locked(activity_id, session) as entry:
+    def state(self, activity_id: str, session: str, *, student_id: str | None = None) -> dict:
+        with self.locked(activity_id, session, student_id=student_id) as entry:
             activity = entry.activity
             teacher = session == activity.owner
-            group = None if teacher else activity.groups[activity.memberships[session]]
+            group = None if teacher else activity.groups[activity.memberships[student_id or session]]
             counts = self._success_counts(activity)
             questions = {question.id: question for question in activity.questions}
             groups = {group.id: group.number for group in activity.groups.values()}

@@ -9,7 +9,7 @@ import pytest
 import uvicorn
 from playwright.sync_api import expect, sync_playwright
 
-from app.main import create_app
+from app.main import COOKIE, STUDENT_RECOVERY_COOKIE, create_app
 from app.web import guided_notes
 
 pytestmark = pytest.mark.skipif(os.getenv("BUZZER_BROWSER_TEST") != "1", reason="需啟用瀏覽器測試")
@@ -155,6 +155,80 @@ def test_teacher_and_student_resume_after_browser_restart(server, tmp_path):
 
         expect(student.locator("#phase")).to_have_text("已取消")
         student_context.close()
+
+
+def test_student_returns_to_original_group_after_session_cookie_is_replaced(server):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel=os.getenv("BUZZER_BROWSER_CHANNEL") or None)
+        teacher = browser.new_context().new_page()
+        context = browser.new_context()
+        student = context.new_page()
+
+        teacher.goto(server)
+        teacher.get_by_label("組數上限").fill("1")
+        teacher.get_by_role("button", name="建立活動").click()
+        expect(teacher.locator("#phase")).to_have_text("準備中")
+        activity_url = teacher.url
+        code = teacher.locator("#identity").inner_text().split()[1]
+
+        # A teacher activity owned by this browser should not be recovered by its student cookie.
+        student.goto(server)
+        student.get_by_label("組數上限").fill("1")
+        student.get_by_role("button", name="建立活動").click()
+        expect(student.locator("#phase")).to_have_text("準備中")
+        owned_url = student.url
+        student.get_by_role("link", name="返回首頁").click()
+        student.get_by_label("活動代碼").fill(code)
+        student.get_by_label("組號", exact=True).fill("1")
+        student.get_by_role("button", name="加入活動").click()
+        expect(student.locator("#identity")).to_contain_text("第 1 組")
+
+        teacher.get_by_role("button", name="載入示範題目").click()
+        teacher.get_by_role("button", name="開輪", exact=True).click()
+        student.get_by_label("第 1 題・空格 1").fill("原組提交")
+        student.get_by_role("button", name="送出第 1 題").click()
+        expect(student.locator("#submissions")).to_contain_text("本組已送出")
+        teacher.get_by_role("button", name="關輪", exact=True).click()
+        teacher.get_by_role("button", name="確認正確", exact=True).click()
+        teacher.get_by_role("button", name="確認定案").click()
+        expect(student.locator("#identity")).to_contain_text("成功 1 題")
+
+        cookies = {item["name"]: item for item in context.cookies()}
+        assert cookies[STUDENT_RECOVERY_COOKIE]["httpOnly"]
+        assert cookies[STUDENT_RECOVERY_COOKIE]["sameSite"] == "Strict"
+        context.clear_cookies(name=COOKIE)
+
+        student.get_by_role("link", name="返回首頁").click()
+        student.get_by_role("link", name="回到進行中的活動", exact=True).click()
+        expect(student).to_have_url(activity_url)
+        expect(student.locator("#identity")).to_contain_text("第 1 組")
+        expect(student.locator("#identity")).to_contain_text("成功 1 題")
+        expect(student.get_by_text("原組提交", exact=True).first).to_be_visible()
+        resumed = {item["name"]: item for item in context.cookies()}
+        assert resumed[COOKIE]["value"] != cookies[COOKIE]["value"]
+        assert resumed[STUDENT_RECOVERY_COOKIE]["value"] == cookies[STUDENT_RECOVERY_COOKIE]["value"]
+
+        session = student.request.get(f"{server}/api/session").json()
+        assert session["active_activity"] is None
+        assert student.request.get(f"{owned_url}/state").status == 403
+        assert student.request.post(f"{owned_url}/cancel", headers={
+            "Origin": server, "X-CSRF-Token": session["csrf_token"],
+        }).status == 403
+        stranger = browser.new_context().new_page()
+        stranger.goto(server)
+        expect(stranger.get_by_role("button", name="加入活動")).to_be_enabled()
+        expect(stranger.get_by_role("link", name="回到進行中的活動")).to_have_count(0)
+        assert stranger.request.get(f"{activity_url}/state").status == 403
+
+        student.get_by_role("button", name="離開組別").click()
+        expect(student.get_by_role("button", name="加入活動")).to_be_enabled()
+        expect(student.get_by_role("link", name="回到進行中的活動")).to_have_count(0)
+        context.clear_cookies(name=COOKIE)
+        student.reload()
+        expect(student.get_by_role("button", name="加入活動")).to_be_enabled()
+        expect(student.get_by_role("link", name="回到進行中的活動")).to_have_count(0)
+        assert student.request.get(f"{activity_url}/state").status == 403
+        browser.close()
 
 
 def test_teacher_imports_mixed_worksheet_and_keeps_previous_result(

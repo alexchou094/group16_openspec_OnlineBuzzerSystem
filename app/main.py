@@ -22,6 +22,7 @@ from app.web.guided_notes import CALLBACK as GOOGLE_CALLBACK, register_import_ro
 
 ROOT = Path(__file__).parent
 COOKIE = "buzzer_session"
+STUDENT_RECOVERY_COOKIE = "buzzer_student"
 COOKIE_MAX_AGE = 400 * 24 * 60 * 60
 
 
@@ -120,6 +121,13 @@ def create_app(service: ActivityService | None = None, *, demo: bool = False,
     Mutation = Annotated[Session, Depends(authorized_mutation)]
     register_import_routes(app, templates, service, existing_session, authorized_mutation)
 
+    def student_id_for(request: Request, session: Session) -> str:
+        return repository.student_id(request.cookies.get(STUDENT_RECOVERY_COOKIE)) or session.student_id
+
+    def set_identity_cookie(response: Response, request: Request, name: str, value: str) -> None:
+        response.set_cookie(name, value, max_age=COOKIE_MAX_AGE, httponly=True,
+                            samesite="strict", secure=request.url.scheme == "https")
+
     def render(request: Request, activity_id: str = ""):
         return templates.TemplateResponse(request=request, name="index.html",
                                           context={"activity_id": activity_id, "demo": demo,
@@ -137,13 +145,12 @@ def create_app(service: ActivityService | None = None, *, demo: bool = False,
     def session_info(request: Request, response: Response):
         session = repository.session(request.cookies.get(COOKIE))
         if session is None:
-            session = repository.new_session()
-        response.set_cookie(COOKIE, session.id, max_age=COOKIE_MAX_AGE, httponly=True,
-                            samesite="strict", secure=request.url.scheme == "https")
+            session = repository.new_session(repository.student_id(request.cookies.get(STUDENT_RECOVERY_COOKIE)))
+        set_identity_cookie(response, request, COOKIE, session.id)
         return {
             "csrf_token": session.csrf,
             "active_activity": repository.active_activity_id(session.id),
-            "student_activities": service.student_activities(session.id),
+            "student_activities": service.student_activities(student_id_for(request, session)),
         }
 
     @app.post("/activities", status_code=201)
@@ -152,19 +159,22 @@ def create_app(service: ActivityService | None = None, *, demo: bool = False,
         return {"id": activity.id, "code": activity.code}
 
     @app.post("/activities/join")
-    def join(body: JoinBody, session: Mutation):
-        activity_id = service.join(session.id, body.code, body.group_number, body.credential)
+    def join(body: JoinBody, request: Request, response: Response, session: Mutation):
+        student_id = student_id_for(request, session)
+        activity_id = service.join(session.id, body.code, body.group_number, body.credential, student_id=student_id)
+        set_identity_cookie(response, request, STUDENT_RECOVERY_COOKIE, student_id)
         return {"id": activity_id}
 
     @app.get("/activities/{activity_id}/state")
     def state(activity_id: str, request: Request):
         if repository.get(activity_id) is None:
             raise ActivityError(404, "活動已失效或不存在。")
-        return service.state(activity_id, existing_session(request).id)
+        session = existing_session(request)
+        return service.state(activity_id, session.id, student_id=student_id_for(request, session))
 
     @app.post("/activities/{activity_id}/leave", status_code=204)
-    def leave(activity_id: str, session: Mutation):
-        service.leave(activity_id, session.id)
+    def leave(activity_id: str, request: Request, session: Mutation):
+        service.leave(activity_id, student_id_for(request, session))
 
     @app.delete("/activities/{activity_id}/groups/{number}", status_code=204)
     def delete_group(activity_id: str, number: int, session: Mutation):
@@ -179,8 +189,8 @@ def create_app(service: ActivityService | None = None, *, demo: bool = False,
         return {"review_version": service.close_round(activity_id, session.id, round_id)}
 
     @app.post("/activities/{activity_id}/rounds/{round_id}/submissions")
-    def submit(activity_id: str, round_id: str, body: SubmissionBody, session: Mutation):
-        return service.submit(activity_id, session.id, round_id, body.question_id, body.answers)
+    def submit(activity_id: str, round_id: str, body: SubmissionBody, request: Request, session: Mutation):
+        return service.submit(activity_id, student_id_for(request, session), round_id, body.question_id, body.answers)
 
     @app.patch("/activities/{activity_id}/rounds/{round_id}/reviews/{submission_id}")
     def review(activity_id: str, round_id: str, submission_id: str, body: ReviewBody, session: Mutation):
