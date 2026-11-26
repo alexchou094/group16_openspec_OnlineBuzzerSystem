@@ -1,6 +1,6 @@
 # 課堂搶答系統
 
-`spec01` 對應 OpenSpec 的 `activity-session`，支援老師建立及控制活動、學生依組號加入、組別身分恢復，以及輪次與結果同步。
+本專案包含活動與組別身分、Google Sheets 學習單匯入、多題搶答、逐筆審閱、公平排序、定案寫回與 CSV。整體驗收狀態、已知缺口及五分鐘 demo 見[交付檢核](openspec/changes/build-online-buzzer-system/delivery-checklist.md)，非主要實作者請使用[整合人工驗收表](openspec/changes/build-online-buzzer-system/integration-manual-acceptance.md)。
 
 ## 每次啟動
 
@@ -9,14 +9,14 @@ Google Cloud 已設定、依賴已安裝後，每次開啟 PowerShell 都在同�
 若先前只完成第 1 節的 Google 驗證，請在同一個 OAuth 用戶端一次性新增正式匯入的回呼網址 `http://127.0.0.1:8000/google/oauth/callback`。原驗證工具使用 `http://127.0.0.1:8001/oauth/callback`，兩個網址可以同時保留。其他欄位見[首次設定 Google Cloud 憑證](#首次設定-google-cloud-憑證)。
 
 ```powershell
-Set-Location "$env:USERPROFILE\OneDrive\Desktop\software_engineering\sw_fianl\spec_final"
+Set-Location 'C:\github repo\group16_openspec_OnlineBuzzerSystem'
 
 $env:BUZZER_GOOGLE_OAUTH_CLIENT_FILE = '本機\client_secret.json'
 $env:BUZZER_GOOGLE_PICKER_KEY = 'PICKER_KEY'
 $env:BUZZER_GOOGLE_PROJECT_NUMBER = '專案編號'
 
 # 需要載入示範題時，取消下一行的註解。
-$env:BUZZER_DEMO = '1'
+# $env:BUZZER_DEMO = '1'
 
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log
 ```
@@ -51,10 +51,12 @@ python -m venv .venv
 
 ### 首次設定 Google Cloud 憑證
 
-1. 在同一個 Google Cloud 專案啟用 **Google Picker API**、**Google Drive API** 和 **Google Sheets API**。若 OAuth 應用處於測試中，在「Google Auth Platform → 目標對象」加入要授權的 Google 帳號。
+1. 開啟 [Google Cloud Console](https://console.cloud.google.com/)，建立或選用同一個專案，在「API 和服務 → 程式庫」啟用 **Google Picker API**、**Google Drive API** 和 **Google Sheets API**。首次使用在「Google Auth Platform」填寫應用程式名稱與聯絡信箱。個人 Google 帳號選外部目標對象，保持測試狀態，將實際操作試算表的 Google 帳號加入測試使用者。資料存取範圍使用 `https://www.googleapis.com/auth/drive.file`，應用程式只要求所選檔案的存取。
 2. 在「Google Auth Platform → 用戶端」建立 **網頁應用程式** OAuth 用戶端。將 `http://127.0.0.1:8000` 加入「已授權的 JavaScript 來源」，將 `http://127.0.0.1:8000/google/oauth/callback` 加入「已授權的重新導向 URI」。下載含 `client_secret` 的 JSON，存放在專案外的私有目錄，或專案內已由 Git 忽略的 `credentials/`。 [Google OAuth Web 用戶端設定](https://developers.google.com/identity/protocols/oauth2/web-server)
-3. 在「API 和服務 → 憑證」建立 **Picker API key**。應用程式限制選「網站」，加入 `http://127.0.0.1:8000/*` 與 `https://docs.google.com/*`。API 限制選「限制金鑰」，只選 **Google Picker API**。Picker 在瀏覽器使用這把 key，由網站及 API 限制控制使用範圍。 [Google Picker 金鑰設定](https://developers.google.com/workspace/drive/picker/guides/web-picker#create_an_api_key)
+3. 在「API 和服務 → 憑證」建立 **Picker API key**。應用程式限制選「網站」，加入 `http://127.0.0.1:8000/*` 與 `https://docs.google.com/*`。API 限制選「限制金鑰」，選 **Google Picker API** 與 **Google Drive API**。Picker 在瀏覽器使用這把 key，由網站及 API 限制控制使用範圍。 [Google Picker 金鑰設定](https://developers.google.com/workspace/drive/picker/guides/web-picker-sample)
 4. 從 Google Cloud 主控台的歡迎頁複製同一專案的 **專案編號（Project number）**，欄位值為純數字。 [查詢 Google Cloud 專案編號](https://docs.cloud.google.com/resource-manager/docs/view-update-projects)
+
+完成後在啟動 PowerShell 設定三個環境變數，見「每次啟動」。`BUZZER_GOOGLE_PROJECT_NUMBER` 是純數字編號，不是專案 ID 或 OAuth client ID。請勿把 JSON 內容或金鑰貼到聊天／提交 Git。正式驗收先執行 `Remove-Item Env:BUZZER_DEMO -ErrorAction SilentlyContinue`，並使用 `http://127.0.0.1:8000`，避免與 `localhost` 混用造成回呼不一致。系統直接透過 Sheets API 讀寫雲端表格，無須下載 XLSX；請登入擁有指定副本編輯權的帳號。首次安裝時若 `python` 指令不可用，可用 Windows 的 `py` 建立虛擬環境。
 
 ### 選擇學習單
 
@@ -93,5 +95,5 @@ $env:BUZZER_DEMO = '1'
 ```powershell
 $env:BUZZER_BROWSER_TEST = '1'
 $env:BUZZER_BROWSER_CHANNEL = 'chrome'
-.\.venv\Scripts\python.exe -m pytest -q tests/test_activity_browser.py
+.\.venv\Scripts\python.exe -m pytest -q -s tests
 ```

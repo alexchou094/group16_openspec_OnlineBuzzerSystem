@@ -66,8 +66,15 @@ def test_group_credentials_and_device_revocation(system):
     service.join("two", activity.code, 1, credential)
     assert service.state(activity.id, "one")["group"] == service.state(activity.id, "two")["group"]
     service.leave(activity.id, "one")
+    assert activity.groups[1].credential == credential
     service.leave(activity.id, "two")
-    service.join("recovery", activity.code, 1, credential)
+    assert 1 not in activity.groups
+    with pytest.raises(ActivityError, match="憑證"):
+        service.join("recovery", activity.code, 1, credential)
+    service.join("recovery", activity.code, 1, None)
+    replacement = activity.groups[1].credential
+    assert replacement != credential
+    credential = replacement
     service.join("backup", activity.code, 1, credential)
     service.delete_group(activity.id, "teacher", 1)
     for device in ("recovery", "backup"):
@@ -197,3 +204,42 @@ def test_group_with_only_rejected_submission_cannot_be_deleted(system):
     service.close_round(activity.id, "teacher", round_id)
     with pytest.raises(ActivityError, match="提交"):
         service.delete_group(activity.id, "teacher", 1)
+
+
+def test_empty_group_release_in_results_preserves_submitted_group(system):
+    service, activity, _ = system
+    import_questions(service, activity)
+    service.join("submitted", activity.code, 1, None)
+    service.join("empty", activity.code, 2, None)
+    original = activity.groups[1]
+    empty = activity.groups[2]
+    round_id = service.open_round(activity.id, "teacher", None, False, None)
+    accepted = service.submit(activity.id, "submitted", round_id, "q1", ["答案"])
+    service.close_round(activity.id, "teacher", round_id)
+    service.leave(activity.id, "submitted")
+    service.leave(activity.id, "empty")
+    assert activity.groups[1] is original and 2 not in activity.groups
+    service.join("recovered", activity.code, 1, original.credential)
+    assert service.state(activity.id, "recovered")["group"]["number"] == 1
+    assert len(activity.current_round.submissions) == 1 and accepted
+    with pytest.raises(ActivityError, match="憑證"):
+        service.join("new", activity.code, 2, empty.credential)
+    service.join("new", activity.code, 2, None)
+    assert activity.groups[2].id != empty.id
+    assert activity.groups[2].credential != empty.credential
+
+
+def test_open_round_rejects_empty_group_deletion_without_revoking_devices(system):
+    service, activity, _ = system
+    import_questions(service, activity)
+    service.join("student", activity.code, 1, None)
+    group = activity.groups[1]
+    round_id = service.open_round(activity.id, "teacher", None, False, None)
+    with pytest.raises(ActivityError, match="準備中或結果階段"):
+        service.delete_group(activity.id, "teacher", 1)
+    assert activity.groups[1] is group
+    assert service.state(activity.id, "student")["group"]["credential"] == group.credential
+    service.close_round(activity.id, "teacher", round_id)
+    service.delete_group(activity.id, "teacher", 1)
+    with pytest.raises(ActivityError, match="權限"):
+        service.state(activity.id, "student")

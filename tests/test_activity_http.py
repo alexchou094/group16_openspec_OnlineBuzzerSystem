@@ -89,3 +89,34 @@ def test_student_session_lists_only_current_activity_memberships(app):
         assert student.get("/api/session").json()["student_activities"] == [second]
         second_teacher.post(f"/activities/{second['id']}/cancel", headers=second_headers).raise_for_status()
         assert student.get("/api/session").json()["student_activities"] == []
+
+
+def test_empty_group_release_and_open_delete_authorization(app):
+    with TestClient(app) as teacher, TestClient(app) as first, TestClient(app) as second:
+        th, fh, sh = authenticate(teacher), authenticate(first), authenticate(second)
+        activity = teacher.post("/activities", headers=th, json={"group_limit": 1}).json()
+        path = f"/activities/{activity['id']}"
+        joining = {"code": activity["code"], "group_number": 1}
+        assert first.post("/activities/join", headers=fh, json=joining).status_code == 200
+        credential = first.get(path + "/state").json()["group"]["credential"]
+        assert second.post("/activities/join", headers=sh,
+                           json={**joining, "credential": credential}).status_code == 200
+        assert first.post(path + "/leave", headers=fh).status_code == 204
+        assert second.get(path + "/state").status_code == 200
+        assert second.post(path + "/leave", headers=sh).status_code == 204
+        assert first.get(path + "/state").status_code == 403
+        assert first.get("/api/session").json()["student_activities"] == []
+        assert first.post("/activities/join", headers=fh,
+                          json={**joining, "credential": credential}).status_code == 403
+        assert first.post("/activities/join", headers=fh, json=joining).status_code == 200
+        replacement = first.get(path + "/state").json()["group"]["credential"]
+        assert replacement != credential
+        assert teacher.post(path + "/demo-questions", headers=th).status_code == 204
+        round_id = teacher.post(path + "/rounds", headers=th, json={}).json()["id"]
+        assert first.delete(path + "/groups/1", headers=fh).status_code == 403
+        assert teacher.delete(path + "/groups/1", headers=th).status_code == 409
+        assert teacher.get(path + "/state").json()["groups"][0]["can_delete"] is False
+        assert first.get(path + "/state").json()["group"]["credential"] == replacement
+        assert teacher.post(path + f"/rounds/{round_id}/close", headers=th).status_code == 200
+        assert teacher.delete(path + "/groups/1", headers=th).status_code == 204
+        assert first.get(path + "/state").status_code == 403

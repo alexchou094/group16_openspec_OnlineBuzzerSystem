@@ -64,6 +64,10 @@ function attachForm(form, submit) {
 }
 
 async function home(session) {
+  if (new URLSearchParams(location.search).get("rejoin") === "1") {
+    notify("組別身分已失效，請重新加入活動。");
+    history.replaceState(null, "", "/");
+  }
   const resume = document.querySelector("#resume");
   if (session.active_activity) {
     resume.href = activityUrl(session.active_activity);
@@ -327,7 +331,7 @@ function renderPanels(state) {
     const list = element("ul");
     for (const group of state.groups) {
       const row = element("li", `第 ${group.number} 組 · 憑證 ${group.credential} · 成功 ${group.successes} 題 `);
-      if (!["FINISHED", "CANCELLED"].includes(phase) && group.can_delete) {
+      if (["PREPARING", "RESULTS"].includes(phase) && group.can_delete) {
         row.append(button(`刪除第 ${group.number} 組`, `groups/${group.number}`, { method: "DELETE" }));
       }
       list.append(row);
@@ -397,6 +401,7 @@ async function sync() {
       document.querySelector("#activity").hidden = true;
       current = undefined;
       connection.textContent = error.message;
+      if (error.status === 403) location.replace("/?rejoin=1");
     } else {
       connection.textContent = "同步中斷，正在重新連線。";
     }

@@ -65,8 +65,7 @@ def test_teacher_and_two_groups_sync(server):
         first.get_by_role("link", name="回到進行中的活動", exact=True).click()
         expect(first.locator("#identity")).to_contain_text("第 1 組")
         teacher.get_by_role("button", name="刪除第 2 組").click()
-        expect(second.locator("#connection")).to_contain_text("沒有此活動的操作權限")
-        second.get_by_role("link", name="返回首頁").click()
+        expect(second.locator("#notice")).to_contain_text("組別身分已失效")
         expect(second.get_by_role("button", name="加入活動")).to_be_enabled()
         expect(second.get_by_role("link", name="回到進行中的活動")).to_have_count(0)
         second.get_by_label("活動代碼").fill(code)
@@ -78,6 +77,7 @@ def test_teacher_and_two_groups_sync(server):
         expect(another_tab.get_by_role("button", name="取消活動")).to_be_visible()
         teacher.get_by_role("button", name="載入示範題目").click()
         teacher.get_by_role("button", name="開輪").click()
+        expect(teacher.get_by_role("button", name="刪除第 2 組")).to_have_count(0)
         for page in (teacher, first, second):
             expect(page.locator("#phase")).to_have_text("搶答中", timeout=2000)
         first_context.set_offline(True)
@@ -109,6 +109,50 @@ def test_teacher_and_two_groups_sync(server):
         second.get_by_role("link", name="返回首頁").click()
         expect(second.get_by_role("button", name="加入活動")).to_be_enabled()
         expect(second.get_by_role("link", name="回到進行中的活動")).to_have_count(0)
+        browser.close()
+
+
+def test_last_device_leave_releases_group_and_invalidates_other_tabs(server):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel=os.getenv("BUZZER_BROWSER_CHANNEL") or None)
+        teacher_context, first_context, second_context = (browser.new_context() for _ in range(3))
+        teacher, first, second = (context.new_page() for context in (teacher_context, first_context, second_context))
+        teacher.goto(server)
+        teacher.get_by_label("組數上限").fill("1")
+        teacher.get_by_role("button", name="建立活動").click()
+        expect(teacher.locator("#phase")).to_have_text("準備中")
+        activity_url = teacher.url
+        code = teacher.locator("#identity").inner_text().split()[1]
+
+        def join(page, credential=""):
+            page.goto(server)
+            page.get_by_label("活動代碼").fill(code)
+            page.get_by_label("組號", exact=True).fill("1")
+            page.get_by_label("加入憑證").fill(credential)
+            page.get_by_role("button", name="加入活動").click()
+
+        join(first)
+        expect(first.locator("#phase")).to_have_text("準備中")
+        credential = first.request.get(activity_url + "/state").json()["group"]["credential"]
+        join(second, credential)
+        expect(second.locator("#phase")).to_have_text("準備中")
+        sibling = first_context.new_page()
+        sibling.goto(activity_url)
+        expect(sibling.locator("#phase")).to_have_text("準備中")
+        first.get_by_role("button", name="離開組別").click()
+        expect(first.get_by_role("button", name="加入活動")).to_be_enabled()
+        expect(sibling.locator("#notice")).to_contain_text("組別身分已失效")
+        expect(sibling.get_by_role("button", name="加入活動")).to_be_enabled()
+        assert second.request.get(activity_url + "/state").json()["group"]["credential"] == credential
+        second.get_by_role("button", name="離開組別").click()
+        expect(second.get_by_role("button", name="加入活動")).to_be_enabled()
+        expect(teacher.get_by_role("button", name="刪除第 1 組")).to_have_count(0)
+        join(first, credential)
+        expect(first.locator("#notice")).to_contain_text("憑證錯誤或已失效")
+        first.get_by_label("加入憑證").fill("")
+        first.get_by_role("button", name="加入活動").click()
+        expect(first.locator("#phase")).to_have_text("準備中")
+        assert first.request.get(activity_url + "/state").json()["group"]["credential"] != credential
         browser.close()
 
 

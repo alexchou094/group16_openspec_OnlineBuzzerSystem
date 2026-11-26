@@ -107,13 +107,17 @@ class ActivityService:
             activity = entry.activity
             if activity.phase not in (Phase.PREPARING, Phase.RESULTS):
                 raise ActivityError(409, "只能在準備中或結果階段離組。")
-            del activity.memberships[session]
+            number = activity.memberships.pop(session)
+            group = activity.groups[number]
+            if number not in activity.memberships.values() and group.id not in activity.submitted_groups:
+                del activity.groups[number]
+                entry.projections.pop(group.id, None)
 
     def delete_group(self, activity_id: str, session: str, number: int) -> None:
         with self.locked(activity_id, session, "teacher") as entry:
             activity = entry.activity
-            if activity.phase in TERMINAL_PHASES:
-                raise ActivityError(409, "活動已結束或取消。")
+            if activity.phase not in (Phase.PREPARING, Phase.RESULTS):
+                raise ActivityError(409, "只能在準備中或結果階段刪除空組。")
             group = activity.groups.get(number)
             if group is None:
                 raise ActivityError(404, "組別不存在。")
@@ -317,7 +321,8 @@ class ActivityService:
             if teacher:
                 submitted = activity.submitted_groups
                 view.update(code=activity.code, group_limit=activity.group_limit,
-                            groups=[{**group_data(item), "can_delete": item.id not in submitted}
+                            groups=[{**group_data(item), "can_delete": (
+                                activity.phase in (Phase.PREPARING, Phase.RESULTS) and item.id not in submitted)}
                                     for item in sorted(activity.groups.values(), key=lambda group: group.number)],
                             available_questions=[{"id": q, "number": questions[q].number} for q in eligible])
                 if activity.source:
