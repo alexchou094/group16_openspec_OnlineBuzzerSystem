@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf }}">
+  <title>學習單匯入 · 課堂搶答系統</title>
+  <link rel="stylesheet" href="/static/activity.css">
+  {% if preparing %}
+  <script type="module" src="/static/guided_notes_import.js"></script>
+  {% endif %}
+</head>
+<body>
+  <header><a href="/">課堂搶答系統</a></header>
+  <main class="import-page" data-import-url="/activities/{{ activity_id }}/import">
+    <a href="/activities/{{ activity_id }}">返回老師看板</a>
+    <h1>學習單匯入</h1>
+    {% if preparing %}
+    <section aria-label="選取學習單">
+      <button id="authorize" type="button" disabled>{{ "重新授權 Google" if authorized else "授權 Google" }}</button>
+      <button id="pick" type="button" data-authorized="{{ 'yes' if authorized else 'no' }}" disabled>選擇 Google 試算表</button>
+      <form id="sheet-form" hidden>
+        <label>工作表 <select name="sheet" required></select></label>
+        <div>
+          <button type="submit">匯入選取的工作表</button>
+          <button id="cancel-selection" type="button" class="secondary">取消選擇</button>
+        </div>
+      </form>
+      <p id="import-status" role="status">{{ message }}</p>
+      <p id="import-error" role="alert" hidden></p>
+    </section>
+    {% else %}
+    <p>已離開準備階段，匯入功能已鎖定。</p>
+    {% endif %}
+    <section aria-labelledby="import-summary-heading">
+      <h2 id="import-summary-heading">目前匯入結果</h2>
+      {% if summary %}
+      <p>{{ summary.title }}</p>
+      <p id="import-count">{{ summary.question_count }} 題、{{ summary.blank_count }} 格</p>
+      <ul class="import-questions">
+        {% for question in summary.questions %}
+        <li>第 {{ question.number }} 題 · {{ question.blank_count }} 格</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p>尚未匯入學習單。</p>
+      {% endif %}
+    </section>
+    <details>
+      <summary>支援的版型與錯誤修正</summary>
+      <ul>
+        <li>在同一列各放一個「題號」和「作答」表頭，題號從 1 連續排列。</li>
+        <li>單題的作答格可以是單格或橫向合併格。題組可縱向合併題號或在相鄰列重複題號，每列在作答區左欄依序填（1）、（2），右欄留給答案。</li>
+        <li>若畫面指出儲存格位置，例如 G6，先修正該格的題號、子編號或合併範圍，再重新選檔。</li>
+      </ul>
+    </details>
+  </main>
+</body>
+</html>

@@ -1,13 +1,16 @@
 import os
 import socket
 import time
+from html import escape
 from threading import Thread
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 import uvicorn
 from playwright.sync_api import expect, sync_playwright
 
 from app.main import create_app
+from app.web import guided_notes
 
 pytestmark = pytest.mark.skipif(os.getenv("BUZZER_BROWSER_TEST") != "1", reason="需啟用瀏覽器測試")
 
@@ -152,3 +155,102 @@ def test_teacher_and_student_resume_after_browser_restart(server, tmp_path):
 
         expect(student.locator("#phase")).to_have_text("已取消")
         student_context.close()
+
+
+def test_teacher_imports_mixed_worksheet_and_keeps_previous_result(
+    server, google_settings, mixed_sheet, single_sheet, update_cell, fake_worksheet_reader, monkeypatch,
+):
+    reader = fake_worksheet_reader(mixed_sheet, single_sheet)
+    monkeypatch.setattr(guided_notes.GoogleWorksheetReader, "list_sheets",
+                        lambda _reader, spreadsheet_id: reader.list_sheets(spreadsheet_id))
+    monkeypatch.setattr(guided_notes.GoogleWorksheetReader, "read_sheet",
+                        lambda _reader, spreadsheet_id, sheet_id: reader.read_sheet(spreadsheet_id, sheet_id))
+
+    def oauth_return(route):
+        params = parse_qs(urlsplit(route.request.url).query)
+        callback = params["redirect_uri"][0]
+        query = urlencode({"state": params["state"][0], "code": "test-code"})
+        return_url = escape(f"{callback}?{query}", quote=True)
+        route.fulfill(content_type="text/html; charset=utf-8", body=f'<a href="{return_url}">同意測試授權</a>')
+
+    google_picker = """
+        window.gapi = { load: (_module, options) => options.callback() };
+        window.google = { picker: {
+            Action: { PICKED: 'picked', CANCEL: 'cancel' }, ViewId: { SPREADSHEETS: 'spreadsheets' },
+            PickerBuilder: class {
+                addView() { return this; } setSelectableMimeTypes() { return this; }
+                setOAuthToken() { return this; } setDeveloperKey() { return this; }
+                setAppId() { return this; } setOrigin() { return this; }
+                setCallback(callback) { this.callback = callback; return this; }
+                build() {
+                    return {
+                        setVisible: () => this.callback(window.pickerChoice
+                            ? { action: 'picked', docs: [{ id: window.pickerChoice }] }
+                            : { action: 'cancel' }),
+                        dispose() {},
+                    };
+                }
+            },
+        }};
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel=os.getenv("BUZZER_BROWSER_CHANNEL") or None)
+        page = browser.new_page()
+        page.set_default_timeout(8000)
+        page.route("https://accounts.google.com/**", oauth_return)
+        page.route("https://apis.google.com/js/api.js", lambda route: route.fulfill(
+            content_type="application/javascript", body=google_picker,
+        ))
+        page.goto(server)
+        page.get_by_label("組數上限").fill("2")
+        page.get_by_role("button", name="建立活動").click()
+        page.get_by_role("link", name="匯入學習單").click()
+        expect(page.get_by_role("heading", name="學習單匯入")).to_be_visible()
+        page.get_by_role("button", name="授權 Google").click()
+        page.get_by_role("link", name="同意測試授權").click()
+        expect(page.get_by_role("status")).to_contain_text("已授權 Google")
+
+        pick = page.get_by_role("button", name="選擇 Google 試算表")
+        page.evaluate("window.pickerChoice = 'test_sheet'")
+        pick.click()
+        expect(page.get_by_label("工作表")).to_be_visible()
+        assert reader.reads == []
+        page.get_by_role("button", name="取消選擇").click()
+        expect(page.get_by_role("status")).to_have_text("已取消選擇工作表。")
+        assert reader.reads == []
+        pick.click()
+        page.get_by_label("工作表").select_option("0")
+        page.get_by_role("button", name="匯入選取的工作表").click()
+        expect(page.locator("#import-count")).to_have_text("4 題、6 格")
+        expect(page.locator(".import-questions li")).to_have_text([
+            "第 1 題 · 2 格", "第 2 題 · 2 格", "第 3 題 · 1 格", "第 4 題 · 1 格",
+        ])
+        assert reader.reads == [("test_sheet", 0)]
+
+        pick.click()
+        expect(page.get_by_role("status")).to_have_text("已取消選檔。")
+        expect(page.locator("#import-count")).to_have_text("4 題、6 格")
+        page.evaluate("window.pickerChoice = 'unavailable'")
+        pick.click()
+        expect(page.get_by_role("alert")).to_contain_text("檔案權限")
+        expect(page.locator("#import-count")).to_have_text("4 題、6 格")
+
+        reader.sheets[1] = update_cell(single_sheet, 4, 1, "無效題號")
+        page.evaluate("window.pickerChoice = 'test_sheet'")
+        pick.click()
+        page.get_by_label("工作表").select_option("1")
+        page.get_by_role("button", name="匯入選取的工作表").click()
+        expect(page.get_by_role("alert")).to_contain_text("B5：題號須為正整數")
+        expect(page.locator("#import-count")).to_have_text("4 題、6 格")
+        html = page.content()
+        assert all(secret not in html for secret in ("test-token", "test-secret", "Traceback"))
+
+        import_url = page.url
+        page.get_by_role("link", name="返回老師看板").click()
+        expect(page.get_by_text("4 題、6 格", exact=True)).to_be_visible()
+        page.get_by_role("button", name="開輪").click()
+        expect(page.locator("#phase")).to_have_text("搶答中")
+        page.goto(import_url)
+        expect(page.get_by_text("匯入功能已鎖定", exact=False)).to_be_visible()
+        expect(pick).to_have_count(0)
+        browser.close()

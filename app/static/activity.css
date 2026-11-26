@@ -25,4 +25,12 @@ a { color: #175e4c; }
 #phase { font-size: 1.25rem; font-weight: 750; }
 fieldset { border: 1px solid #ccddd6; border-radius: .35rem; }
 li { margin-block: .3rem; }
+.import-page { max-width: 42rem; }
+.import-page h1 { margin-top: .75rem; }
+.import-page section, .import-page details { margin-block: 1rem; }
+.import-page summary { cursor: pointer; font-weight: 650; }
+.import-page #import-status:empty { display: none; }
+#import-error { color: #8a2620; }
+.import-page .secondary { color: #175e4c; background: white; }
+.import-questions { padding-left: 1.5rem; }
 [hidden] { display: none !important; }
