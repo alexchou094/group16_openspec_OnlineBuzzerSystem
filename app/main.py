@@ -18,6 +18,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.domain.activity import Blank, Question, SourceSnapshot
 from app.repositories.memory import MemoryRepository, Session
 from app.services.activities import ActivityError, ActivityService
+from app.web.guided_notes import CALLBACK as GOOGLE_CALLBACK, register_import_routes
 
 ROOT = Path(__file__).parent
 COOKIE = "buzzer_session"
@@ -86,6 +87,8 @@ def create_app(service: ActivityService | None = None, *, demo: bool = False,
         response = await call_next(request)
         if not request.url.path.startswith("/static/"):
             response.headers["Cache-Control"] = "no-store"
+        if request.url.path == GOOGLE_CALLBACK:
+            response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
     @app.exception_handler(ActivityError)
@@ -115,6 +118,7 @@ def create_app(service: ActivityService | None = None, *, demo: bool = False,
         return session
 
     Mutation = Annotated[Session, Depends(authorized_mutation)]
+    register_import_routes(app, templates, service, existing_session, authorized_mutation)
 
     def render(request: Request, activity_id: str = ""):
         return templates.TemplateResponse(request=request, name="index.html",

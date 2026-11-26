@@ -241,6 +241,11 @@ function renderPanels(state) {
   controls.append(element("h2", teacher ? "活動操作" : "組別操作"));
   if (teacher) {
     if (phase === "PREPARING") {
+      const importLink = element("a", state.import_summary ? "重新匯入學習單" : "匯入學習單");
+      importLink.href = actionUrl("import");
+      const importRow = element("p");
+      importRow.append(importLink);
+      controls.append(importRow);
       if (demo && !state.available_questions.length) controls.append(button("載入示範題目", "demo-questions"));
       if (!state.available_questions.length) controls.append(element("p", "開輪前請先匯入題目。"));
       controls.append(button("取消活動", "cancel"));
@@ -261,6 +266,19 @@ function renderPanels(state) {
   const sections = controls.children.length > 1 ? [controls] : [];
   if (phase === "OPEN") sections.push(submissionPanel(state));
   if (teacher) {
+    if (state.import_summary) {
+      const summary = state.import_summary;
+      const section = element("section");
+      section.append(element("h2", "目前匯入結果"), element("p", summary.title),
+        element("p", `${summary.question_count} 題、${summary.blank_count} 格`));
+      const questions = element("ul");
+      questions.className = "import-questions";
+      for (const question of summary.questions) {
+        questions.append(element("li", `第 ${question.number} 題 · ${question.blank_count} 格`));
+      }
+      section.append(questions);
+      sections.push(section);
+    }
     const groups = element("section");
     groups.append(element("h2", "組別與加入憑證"));
     if (!state.groups.length) groups.append(element("p", "目前沒有組別。"));
@@ -277,7 +295,7 @@ function renderPanels(state) {
   }
   if (round?.review_version || state.history.length) sections.push(resultsPanel(state));
 
-  const nextKey = JSON.stringify([phase, round?.id, round?.review_version, round?.finalized, state.available_questions]);
+  const nextKey = JSON.stringify([phase, round?.id, round?.review_version, round?.finalized, state.available_questions, state.import_summary]);
   if (nextKey === controlsKey && panels.firstElementChild?.querySelector("form") && sections[0] === controls) {
     // 組別更新時保留老師正在編輯的開輪設定。
     for (const child of Array.from(panels.children).slice(1)) child.remove();

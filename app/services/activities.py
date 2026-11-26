@@ -289,6 +289,13 @@ class ActivityService:
                             groups=[{**group_data(item), "can_delete": item.id not in submitted}
                                     for item in sorted(activity.groups.values(), key=lambda group: group.number)],
                             available_questions=[{"id": q, "number": questions[q].number} for q in eligible])
+                if activity.source:
+                    view["import_summary"] = {
+                        "title": activity.source.title,
+                        "question_count": len(activity.questions),
+                        "blank_count": sum(len(q.blanks) for q in activity.questions),
+                        "questions": [{"number": q.number, "blank_count": len(q.blanks)} for q in activity.questions],
+                    }
             else:
                 view["group"] = group_data(group)
             key = "teacher" if teacher else group.id

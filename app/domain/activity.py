@@ -32,6 +32,8 @@ class SourceSnapshot:
     sheet_id: int
     title: str
     fingerprint: str
+    headers: tuple[tuple[str, str], ...] = ()
+    merge_ranges: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

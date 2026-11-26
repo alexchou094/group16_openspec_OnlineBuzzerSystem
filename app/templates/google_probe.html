@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf }}">
+    <title>Google 試算表驗證</title>
+    <link rel="stylesheet" href="/static/activity.css">
+    <script type="module" src="/static/google_probe.js"></script>
+</head>
+<body>
+    <main>
+        <h1>Google 試算表驗證</h1>
+        <p>選擇指定測試複本。RAW 測試會將文字 <code>=1+2</code> 寫入「OAuth 驗證」分頁的 B1。</p>
+        <button id="authorize">授權 Google</button>
+        <button id="pick" {% if not authorized %}disabled{% endif %}>選擇測試複本</button>
+        <button id="read" {% if not selected %}disabled{% endif %}>讀取值和合併範圍</button>
+        <button id="write" {% if not selected %}disabled{% endif %}>RAW 寫入並讀回</button>
+        <p id="status" role="status">{{ message }}</p>
+        <pre id="result"></pre>
+    </main>
+</body>
+</html>
